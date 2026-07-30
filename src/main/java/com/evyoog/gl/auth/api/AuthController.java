@@ -1,5 +1,6 @@
 package com.evyoog.gl.auth.api;
 
+import com.evyoog.gl.auth.dto.ChangePasswordRequest;
 import com.evyoog.gl.auth.dto.LoginRequest;
 import com.evyoog.gl.auth.dto.LoginResponse;
 import com.evyoog.gl.auth.dto.LogoutRequest;
@@ -54,5 +55,14 @@ public class AuthController {
     public ApiResponse<UserProfileResponse> me(Authentication authentication) {
         UUID userId = UUID.fromString(authentication.getName());
         return ApiResponse.ok(authService.getProfile(userId));
+    }
+
+    @PostMapping("/change-password")
+    @Operation(summary = "Change the authenticated user's own password and revoke their existing refresh tokens")
+    public ApiResponse<Void> changePassword(Authentication authentication,
+                                             @Valid @RequestBody ChangePasswordRequest request) {
+        UUID userId = UUID.fromString(authentication.getName());
+        authService.changePassword(userId, request);
+        return new ApiResponse<>(true, null, "Password changed successfully", null);
     }
 }

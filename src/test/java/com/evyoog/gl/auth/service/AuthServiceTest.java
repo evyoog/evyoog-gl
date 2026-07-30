@@ -5,12 +5,14 @@ import com.evyoog.gl.auth.domain.RefreshToken;
 import com.evyoog.gl.auth.domain.Role;
 import com.evyoog.gl.auth.domain.User;
 import com.evyoog.gl.auth.domain.UserRole;
+import com.evyoog.gl.auth.dto.ChangePasswordRequest;
 import com.evyoog.gl.auth.dto.LoginRequest;
 import com.evyoog.gl.auth.dto.LoginResponse;
 import com.evyoog.gl.auth.dto.RefreshRequest;
 import com.evyoog.gl.auth.repository.RefreshTokenRepository;
 import com.evyoog.gl.auth.repository.UserRepository;
 import com.evyoog.gl.auth.repository.UserRoleRepository;
+import com.evyoog.gl.common.audit.service.AuditService;
 import com.evyoog.gl.common.exception.EvyoogException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,6 +32,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -40,6 +45,7 @@ class AuthServiceTest {
     @Mock private RefreshTokenRepository refreshTokenRepository;
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private JwtService jwtService;
+    @Mock private AuditService auditService;
 
     @InjectMocks
     private AuthService authService;
@@ -196,5 +202,75 @@ class AuthServiceTest {
         authService.logout("raw-refresh-token");
 
         assertThat(existing.isRevoked()).isTrue();
+    }
+
+    @Test
+    void testChangePassword_validCredentials_succeeds() {
+        User user = activeUser();
+        ChangePasswordRequest request = new ChangePasswordRequest("current", "NewPass123");
+
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("current", user.getPasswordHash())).thenReturn(true);
+        when(passwordEncoder.encode("NewPass123")).thenReturn("new-hashed");
+        when(refreshTokenRepository.findByUserIdAndRevokedFalse(user.getId())).thenReturn(List.of());
+
+        authService.changePassword(user.getId(), request);
+
+        assertThat(user.getPasswordHash()).isEqualTo("new-hashed");
+        assertThat(user.isMustChangePwd()).isFalse();
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void testChangePassword_wrongCurrentPassword_throws400() {
+        User user = activeUser();
+        ChangePasswordRequest request = new ChangePasswordRequest("wrong", "NewPass123");
+
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("wrong", user.getPasswordHash())).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.changePassword(user.getId(), request))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "INVALID_CURRENT_PASSWORD")
+                .hasFieldOrPropertyWithValue("status", HttpStatus.BAD_REQUEST);
+
+        verify(refreshTokenRepository, never()).findByUserIdAndRevokedFalse(any());
+    }
+
+    @Test
+    void testChangePassword_weakNewPassword_throws400() {
+        User user = activeUser();
+        ChangePasswordRequest request = new ChangePasswordRequest("current", "weak");
+
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("current", user.getPasswordHash())).thenReturn(true);
+
+        assertThatThrownBy(() -> authService.changePassword(user.getId(), request))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "WEAK_PASSWORD")
+                .hasFieldOrPropertyWithValue("status", HttpStatus.BAD_REQUEST);
+
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void testChangePassword_revokesRefreshTokens() {
+        User user = activeUser();
+        ChangePasswordRequest request = new ChangePasswordRequest("current", "NewPass123");
+
+        RefreshToken token1 = RefreshToken.builder().id(UUID.randomUUID()).user(user).revoked(false).build();
+        RefreshToken token2 = RefreshToken.builder().id(UUID.randomUUID()).user(user).revoked(false).build();
+
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("current", user.getPasswordHash())).thenReturn(true);
+        when(passwordEncoder.encode("NewPass123")).thenReturn("new-hashed");
+        when(refreshTokenRepository.findByUserIdAndRevokedFalse(user.getId()))
+                .thenReturn(List.of(token1, token2));
+
+        authService.changePassword(user.getId(), request);
+
+        assertThat(token1.isRevoked()).isTrue();
+        assertThat(token2.isRevoked()).isTrue();
+        verify(refreshTokenRepository, times(1)).saveAll(List.of(token1, token2));
     }
 }

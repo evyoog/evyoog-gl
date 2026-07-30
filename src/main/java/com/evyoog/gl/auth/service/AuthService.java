@@ -4,6 +4,7 @@ import com.evyoog.gl.auth.domain.Permission;
 import com.evyoog.gl.auth.domain.RefreshToken;
 import com.evyoog.gl.auth.domain.User;
 import com.evyoog.gl.auth.domain.UserRole;
+import com.evyoog.gl.auth.dto.ChangePasswordRequest;
 import com.evyoog.gl.auth.dto.LoginRequest;
 import com.evyoog.gl.auth.dto.LoginResponse;
 import com.evyoog.gl.auth.dto.RefreshRequest;
@@ -12,6 +13,8 @@ import com.evyoog.gl.auth.dto.UserRoleAssignmentResponse;
 import com.evyoog.gl.auth.repository.RefreshTokenRepository;
 import com.evyoog.gl.auth.repository.UserRepository;
 import com.evyoog.gl.auth.repository.UserRoleRepository;
+import com.evyoog.gl.common.audit.domain.AuditAction;
+import com.evyoog.gl.common.audit.service.AuditService;
 import com.evyoog.gl.common.exception.EvyoogException;
 import com.evyoog.gl.common.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -29,17 +32,22 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class AuthService {
 
+    private static final Pattern UPPERCASE_PATTERN = Pattern.compile("[A-Z]");
+    private static final Pattern DIGIT_PATTERN = Pattern.compile("[0-9]");
+
     private final UserRepository userRepository;
     private final UserRoleRepository userRoleRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final AuditService auditService;
 
     @Value("${evyoog.jwt.refresh-expiration-ms}")
     private long refreshExpirationMs;
@@ -158,6 +166,39 @@ public class AuthService {
                 .roles(roles)
                 .permissions(permissions)
                 .build();
+    }
+
+    @Transactional
+    public void changePassword(UUID userId, ChangePasswordRequest request) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+
+        if (!passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {
+            throw new EvyoogException("INVALID_CURRENT_PASSWORD",
+                    "Current password is incorrect.", HttpStatus.BAD_REQUEST);
+        }
+
+        validateNewPassword(request.newPassword());
+
+        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        user.setMustChangePwd(false);
+        userRepository.save(user);
+
+        List<RefreshToken> activeTokens = refreshTokenRepository.findByUserIdAndRevokedFalse(userId);
+        activeTokens.forEach(rt -> rt.setRevoked(true));
+        refreshTokenRepository.saveAll(activeTokens);
+
+        auditService.log(AuditAction.UPDATE, "auth_user", user.getId(), null, "password changed", userId.toString());
+    }
+
+    private void validateNewPassword(String newPassword) {
+        if (newPassword.length() < 8
+                || !UPPERCASE_PATTERN.matcher(newPassword).find()
+                || !DIGIT_PATTERN.matcher(newPassword).find()) {
+            throw new EvyoogException("WEAK_PASSWORD",
+                    "Password must be at least 8 characters with one uppercase letter and one number.",
+                    HttpStatus.BAD_REQUEST);
+        }
     }
 
     private UUID resolveLegalEntityId(UUID userId, UUID requestedLegalEntityId) {
