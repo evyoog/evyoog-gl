@@ -18,6 +18,8 @@ public interface FinanceDimensionRepository extends JpaRepository<FinanceDimensi
 
     List<FinanceDimension> findByLedgerId(UUID ledgerId);
 
+    List<FinanceDimension> findByLedgerIdAndIsActiveTrue(UUID ledgerId);
+
     List<FinanceDimension> findByLedgerIdAndDimensionType(UUID ledgerId, DimensionType dimensionType);
 
     Optional<FinanceDimension> findByLedgerIdAndDimensionTypeAndIsActiveTrue(UUID ledgerId, DimensionType dimensionType);

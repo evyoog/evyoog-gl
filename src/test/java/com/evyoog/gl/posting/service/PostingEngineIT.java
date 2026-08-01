@@ -170,6 +170,56 @@ class PostingEngineIT {
         assertThat(balances.get(0).getVersion()).isEqualTo(1L);
     }
 
+    @Test
+    void testPostThick_requiredCostCentrePresent_success() throws Exception {
+        Fixture fx = buildFixture("THICK");
+        openPeriod(fx);
+        UUID costCentreDimId = createFinanceDimensionOfType(fx.ledgerId, "CC-DIM", "COST_CENTRE", true);
+        createDimensionValue(costCentreDimId, "CC-MFG", null);
+
+        PostingRequest request = balancedRequest(fx);
+        request.setLines(List.of(
+                PostingLineRequest.builder().naturalAccountValueId(fx.cashAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-MFG"))
+                        .debitAmount(new BigDecimal("100.00")).build(),
+                PostingLineRequest.builder().naturalAccountValueId(fx.revenueAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-MFG"))
+                        .creditAmount(new BigDecimal("100.00")).build()));
+
+        PostingResult result = postingEngine.post(request);
+
+        assertThat(result.isSuccess()).isTrue();
+    }
+
+    @Test
+    void testPostThick_requiredCostCentreMissing_throwsMISSING_REQUIRED_DIMENSION() throws Exception {
+        Fixture fx = buildFixture("THICK");
+        openPeriod(fx);
+        createFinanceDimensionOfType(fx.ledgerId, "CC-DIM", "COST_CENTRE", true);
+
+        assertThatThrownBy(() -> postingEngine.post(balancedRequest(fx)))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "MISSING_REQUIRED_DIMENSION")
+                .hasFieldOrPropertyWithValue("status", org.springframework.http.HttpStatus.BAD_REQUEST);
+    }
+
+    private UUID createFinanceDimensionOfType(UUID ledgerId, String code, String dimensionType, boolean isRequired) throws Exception {
+        Map<String, Object> request = new HashMap<>();
+        request.put("ledgerId", ledgerId.toString());
+        request.put("code", code);
+        request.put("name", code);
+        request.put("dimensionType", dimensionType);
+        request.put("isRequired", isRequired);
+
+        String response = mockMvc.perform(post("/api/v1/gl/finance-dimensions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        return UUID.fromString(objectMapper.readTree(response).at("/data/id").asText());
+    }
+
     private PostingRequest balancedRequest(Fixture fx) {
         return PostingRequest.builder()
                 .legalEntityId(fx.legalEntityId)

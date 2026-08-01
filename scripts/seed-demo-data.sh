@@ -7,9 +7,11 @@
 #   3. Accounting Calendar (auto-generates FY 2025-26 periods on creation)
 #   4. Opens the APR-2025 period for the Legal Entity
 #   5. 25 Chart of Accounts entries (Assets/Liabilities/Equity/Revenue/Expense)
-#   6. 10 posted journal entries covering opening balances, sales, purchases,
-#      payroll, and depreciation
-#   7. Closes the APR-2025 period
+#   6. Cost Centre (required) and Product (optional) Finance Dimensions + values
+#   7. 10 posted journal entries covering opening balances, sales, purchases,
+#      payroll, and depreciation — each line carries COST_CENTRE (and PRODUCT
+#      on revenue lines) in its account combination
+#   8. Closes the APR-2025 period
 #
 # Usage:
 #   ./scripts/seed-demo-data.sh <legalEntityId>
@@ -77,7 +79,7 @@ if [[ -z "$ACCESS_TOKEN" ]]; then
 fi
 echo "  Logged in."
 
-echo "==> [1/9] Checking for existing ledger on Legal Entity ${LEGAL_ENTITY_ID}"
+echo "==> [1/10] Checking for existing ledger on Legal Entity ${LEGAL_ENTITY_ID}"
 EXISTING_LEDGER_ID=$(api GET "/api/v1/gl/legal-entity-ledgers?legalEntityId=${LEGAL_ENTITY_ID}" \
     | jq -r '.data[] | select(.ledgerCode == "PRIM-01") | .ledgerId' | head -n1)
 
@@ -98,7 +100,7 @@ else
     LEDGER_ID=$(jq -r '.data.id' <<<"$LEDGER_RESPONSE")
     echo "  Ledger created: ${LEDGER_ID}"
 
-    echo "==> [1/9] Linking ledger to Legal Entity"
+    echo "==> [1/10] Linking ledger to Legal Entity"
     api POST /api/v1/gl/legal-entity-ledgers "$(jq -n \
         --arg legalEntityId "$LEGAL_ENTITY_ID" \
         --arg ledgerId "$LEDGER_ID" \
@@ -106,7 +108,7 @@ else
     echo "  Linked."
 fi
 
-echo "==> [2/9] Checking for existing NATURAL_ACCOUNT Finance Dimension"
+echo "==> [2/10] Checking for existing NATURAL_ACCOUNT Finance Dimension"
 EXISTING_DIMENSION=$(api GET "/api/v1/gl/finance-dimensions?ledgerId=${LEDGER_ID}&dimensionType=NATURAL_ACCOUNT" \
     | jq -r '.data | length')
 
@@ -127,7 +129,7 @@ else
     echo "  Finance dimension created."
 fi
 
-echo "==> [3/9] Checking for existing accounting calendar"
+echo "==> [3/10] Checking for existing accounting calendar"
 EXISTING_CALENDAR_ID=$(api GET "/api/v1/gl/accounting-calendars?ledgerId=${LEDGER_ID}" | jq -r '.data.id // empty')
 
 if [[ -n "$EXISTING_CALENDAR_ID" ]]; then
@@ -150,7 +152,7 @@ else
     echo "  Calendar created: ${CALENDAR_ID} (${GENERATED_COUNT} periods generated for FY 2025-26)"
 fi
 
-echo "==> [4/9] Checking for existing APR-2025 period status"
+echo "==> [4/10] Checking for existing APR-2025 period status"
 APR_2025_ID=$(api GET "/api/v1/gl/accounting-periods/find?calendarId=${CALENDAR_ID}&date=2025-04-15" | jq -r '.data.id')
 echo "  APR-2025 period id: ${APR_2025_ID}"
 
@@ -180,13 +182,13 @@ else
     PERIOD_STATUS_STATE="OPEN"
 fi
 
-echo "==> [5/9] Fetching MANUAL journal source and ACCRUAL journal category ids"
+echo "==> [5/10] Fetching MANUAL journal source and ACCRUAL journal category ids"
 MANUAL_SOURCE_ID=$(api GET /api/v1/gl/journal-sources | jq -r '.data[] | select(.code=="MANUAL") | .id')
 ACCRUAL_CATEGORY_ID=$(api GET /api/v1/gl/journal-categories | jq -r '.data[] | select(.code=="ACCRUAL") | .id')
 echo "  journalSourceId (MANUAL):   ${MANUAL_SOURCE_ID}"
 echo "  journalCategoryId (ACCRUAL): ${ACCRUAL_CATEGORY_ID}"
 
-echo "==> [6/9] Creating Chart of Accounts (25 accounts)"
+echo "==> [6/10] Creating Chart of Accounts (25 accounts)"
 
 # code|name|qualifier
 ACCOUNTS=(
@@ -249,10 +251,113 @@ for entry in "${ACCOUNTS[@]}"; do
     echo "  ${code} ${name} (${qualifier}) -> ${acct_id}"
 done
 
-echo "==> [7/9] Posting journal entries"
+echo "==> [7/10] Creating Cost Centre (required) and Product (optional) Finance Dimensions"
+
+EXISTING_CC_DIM=$(api GET "/api/v1/gl/finance-dimensions?ledgerId=${LEDGER_ID}&dimensionType=COST_CENTRE" | jq -r '.data[0].id // empty')
+if [[ -n "$EXISTING_CC_DIM" ]]; then
+    COST_CTR_DIM_ID="$EXISTING_CC_DIM"
+    echo "  COST_CENTRE Finance Dimension already exists -> ${COST_CTR_DIM_ID}"
+else
+    COST_CTR_DIM_ID=$(api POST /api/v1/gl/finance-dimensions "$(jq -n \
+        --arg ledgerId "$LEDGER_ID" \
+        '{
+            ledgerId: $ledgerId,
+            code: "COST-CTR",
+            name: "Cost Centre",
+            description: "Cost centre dimension",
+            dimensionType: "COST_CENTRE",
+            isRequired: true,
+            displayOrder: 2
+        }')" | jq -r '.data.id')
+    echo "  COST_CENTRE Finance Dimension created -> ${COST_CTR_DIM_ID}"
+fi
+
+EXISTING_PRODUCT_DIM=$(api GET "/api/v1/gl/finance-dimensions?ledgerId=${LEDGER_ID}&dimensionType=PRODUCT" | jq -r '.data[0].id // empty')
+if [[ -n "$EXISTING_PRODUCT_DIM" ]]; then
+    PRODUCT_DIM_ID="$EXISTING_PRODUCT_DIM"
+    echo "  PRODUCT Finance Dimension already exists -> ${PRODUCT_DIM_ID}"
+else
+    PRODUCT_DIM_ID=$(api POST /api/v1/gl/finance-dimensions "$(jq -n \
+        --arg ledgerId "$LEDGER_ID" \
+        '{
+            ledgerId: $ledgerId,
+            code: "PRODUCT",
+            name: "Product",
+            description: "Product dimension",
+            dimensionType: "PRODUCT",
+            isRequired: false,
+            displayOrder: 3
+        }')" | jq -r '.data.id')
+    echo "  PRODUCT Finance Dimension created -> ${PRODUCT_DIM_ID}"
+fi
+
+# code|name|description
+COST_CENTRES=(
+    "CC-MFG|Manufacturing|Manufacturing operations"
+    "CC-SAL|Sales|Sales and marketing"
+    "CC-ADM|Administration|General administration"
+    "CC-RND|R&D|Research and development"
+)
+
+for entry in "${COST_CENTRES[@]}"; do
+    IFS='|' read -r code name description <<<"$entry"
+    existing=$(api GET "/api/v1/gl/dimension-values?financeDimensionId=${COST_CTR_DIM_ID}" \
+        | jq -r --arg code "$code" '.data[] | select(.code == $code) | .id' | head -n1)
+    if [[ -n "$existing" ]]; then
+        echo "  Cost Centre ${code} already exists -> ${existing}"
+        continue
+    fi
+    value_id=$(api POST /api/v1/gl/dimension-values "$(jq -n \
+        --arg financeDimensionId "$COST_CTR_DIM_ID" --arg code "$code" --arg name "$name" --arg description "$description" \
+        '{financeDimensionId: $financeDimensionId, code: $code, name: $name, description: $description,
+          isPostable: true, displayOrder: 1}')" | jq -r '.data.id')
+    echo "  Cost Centre ${code} ${name} -> ${value_id}"
+done
+
+# code|name|description
+PRODUCTS=(
+    "GATE-VLV|Gate Valves|Industrial gate valves"
+    "BALL-VLV|Ball Valves|Industrial ball valves"
+    "BFLY-VLV|Butterfly Valves|Industrial butterfly valves"
+    "SPARES|Spare Parts|Spare parts and accessories"
+    "SERVICES|Services|Service and AMC revenue"
+)
+
+for entry in "${PRODUCTS[@]}"; do
+    IFS='|' read -r code name description <<<"$entry"
+    existing=$(api GET "/api/v1/gl/dimension-values?financeDimensionId=${PRODUCT_DIM_ID}" \
+        | jq -r --arg code "$code" '.data[] | select(.code == $code) | .id' | head -n1)
+    if [[ -n "$existing" ]]; then
+        echo "  Product ${code} already exists -> ${existing}"
+        continue
+    fi
+    value_id=$(api POST /api/v1/gl/dimension-values "$(jq -n \
+        --arg financeDimensionId "$PRODUCT_DIM_ID" --arg code "$code" --arg name "$name" --arg description "$description" \
+        '{financeDimensionId: $financeDimensionId, code: $code, name: $name, description: $description,
+          isPostable: true, displayOrder: 1}')" | jq -r '.data.id')
+    echo "  Product ${code} ${name} -> ${value_id}"
+done
+
+echo "==> [8/10] Posting journal entries"
 
 JOURNALS_RESPONSE=$(api GET "/api/v1/gl/journals?legalEntityId=${LEGAL_ENTITY_ID}&status=POSTED&size=50")
 POSTED_COUNT=$(jq -r '(.data.content // .data // []) | length' <<<"$JOURNALS_RESPONSE" 2>/dev/null || echo "0")
+
+# Cost Centre is a required Finance Dimension on this Ledger — every posted
+# line must carry one. Product is optional — only tagged on revenue lines.
+declare -A COST_CENTRE_FOR=(
+    [1100]="CC-ADM" [1200]="CC-ADM" [1300]="CC-ADM" [1400]="CC-MFG" [1500]="CC-MFG"
+    [1600]="CC-MFG" [1700]="CC-ADM" [1800]="CC-ADM"
+    [2100]="CC-ADM" [2200]="CC-ADM" [2300]="CC-ADM" [2400]="CC-ADM" [2500]="CC-ADM"
+    [3100]="CC-ADM" [3200]="CC-ADM"
+    [4100]="CC-SAL" [4200]="CC-SAL" [4300]="CC-SAL"
+    [5100]="CC-MFG" [5200]="CC-MFG" [5300]="CC-MFG" [5400]="CC-ADM" [5500]="CC-MFG"
+    [5600]="CC-ADM" [5700]="CC-ADM"
+)
+
+declare -A PRODUCT_FOR=(
+    [4100]="GATE-VLV" [4200]="GATE-VLV" [4300]="SERVICES"
+)
 
 # description|glDate|drCode|drAmount|crCode|crAmount
 JOURNALS=(
@@ -278,13 +383,20 @@ else
 
         dr_id="${ACCOUNT_ID[$drCode]}"
         cr_id="${ACCOUNT_ID[$crCode]}"
+        dr_cc="${COST_CENTRE_FOR[$drCode]}"
+        cr_cc="${COST_CENTRE_FOR[$crCode]}"
+        dr_product="${PRODUCT_FOR[$drCode]:-}"
+        cr_product="${PRODUCT_FOR[$crCode]:-}"
 
         LINES_JSON=$(jq -n \
-            --arg drId "$dr_id" --arg drCode "$drCode" --argjson drAmount "$drAmount" \
-            --arg crId "$cr_id" --arg crCode "$crCode" --argjson crAmount "$crAmount" \
-            '[
-                {naturalAccountValueId: $drId, accountCombination: {NATURAL_ACCOUNT: $drCode}, debitAmount: $drAmount},
-                {naturalAccountValueId: $crId, accountCombination: {NATURAL_ACCOUNT: $crCode}, creditAmount: $crAmount}
+            --arg drId "$dr_id" --arg drCode "$drCode" --argjson drAmount "$drAmount" --arg drCc "$dr_cc" --arg drProduct "$dr_product" \
+            --arg crId "$cr_id" --arg crCode "$crCode" --argjson crAmount "$crAmount" --arg crCc "$cr_cc" --arg crProduct "$cr_product" \
+            'def combo($natCode; $cc; $product):
+                {NATURAL_ACCOUNT: $natCode, COST_CENTRE: $cc}
+                + (if ($product // "") != "" then {PRODUCT: $product} else {} end);
+             [
+                {naturalAccountValueId: $drId, accountCombination: combo($drCode; $drCc; $drProduct), debitAmount: $drAmount},
+                {naturalAccountValueId: $crId, accountCombination: combo($crCode; $crCc; $crProduct), creditAmount: $crAmount}
             ]')
 
         JOURNAL_BODY=$(jq -n \
@@ -316,7 +428,7 @@ else
     # so P&L reports show meaningful data during the demo period.
 fi
 
-echo "==> [8/9] Closing APR-2025 period"
+echo "==> [9/10] Closing APR-2025 period"
 if [[ "$PERIOD_STATUS_STATE" == "CLOSED" ]]; then
     echo "  APR-2025 already CLOSED — skipping close step."
 else
@@ -328,7 +440,7 @@ else
 fi
 
 echo ""
-echo "==> [9/9] Done. Summary:"
+echo "==> [10/10] Done. Summary:"
 echo "  legalEntityId: ${LEGAL_ENTITY_ID}"
 echo "  ledgerId:      ${LEDGER_ID}"
 echo "  calendarId:    ${CALENDAR_ID}"

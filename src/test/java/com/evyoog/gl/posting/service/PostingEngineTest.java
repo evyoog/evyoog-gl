@@ -38,6 +38,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -114,6 +115,8 @@ class PostingEngineTest {
         lenient().when(financeDimensionRepository
                 .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.NATURAL_ACCOUNT))
                 .thenReturn(Optional.of(naturalAcctDim));
+        lenient().when(financeDimensionRepository.findByLedgerIdAndIsActiveTrue(ledgerId))
+                .thenReturn(List.of(naturalAcctDim));
         lenient().when(dimensionValueRepository
                 .findByIdAndFinanceDimensionIdAndIsActiveTrue(cashAccountId, naturalAcctDimId))
                 .thenReturn(Optional.of(cashAccount));
@@ -385,5 +388,89 @@ class PostingEngineTest {
         when(journalHeaderRepository.countByCreatedAtAfter(any())).thenReturn(4L);
         PostingResult result = postingEngine.post(balancedThickRequest());
         assertThat(result.getJournalNumber()).matches("JE-\\d{4}-00005");
+    }
+
+    // ── Rule 9 — account combination / required dimension validation ───────
+
+    private static final UUID COST_CTR_DIM_ID = UUID.randomUUID();
+    private static final UUID CC_MFG_ID = UUID.randomUUID();
+
+    private FinanceDimension requiredCostCentreDimension() {
+        return FinanceDimension.builder().id(COST_CTR_DIM_ID)
+                .dimensionType(DimensionType.COST_CENTRE).code("COST-CTR").name("Cost Centre")
+                .isRequired(true).build();
+    }
+
+    private PostingRequest requestWithCombination(Map<String, String> combination) {
+        PostingRequest request = balancedThickRequest();
+        request.setLines(List.of(
+                PostingLineRequest.builder().naturalAccountValueId(cashAccountId)
+                        .accountCombination(combination)
+                        .debitAmount(new BigDecimal("100.00")).build(),
+                PostingLineRequest.builder().naturalAccountValueId(revenueAccountId)
+                        .accountCombination(combination)
+                        .creditAmount(new BigDecimal("100.00")).build()));
+        return request;
+    }
+
+    @Test
+    void testValidAccountCombination_allDimensionsValid_passes() {
+        FinanceDimension costCentreDim = requiredCostCentreDimension();
+        when(financeDimensionRepository.findByLedgerIdAndIsActiveTrue(ledgerId))
+                .thenReturn(List.of(costCentreDim));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.COST_CENTRE))
+                .thenReturn(Optional.of(costCentreDim));
+        when(dimensionValueRepository
+                .findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-MFG"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(CC_MFG_ID).code("CC-MFG").build()));
+
+        PostingResult result = postingEngine.post(requestWithCombination(Map.of("COST_CENTRE", "CC-MFG")));
+
+        assertThat(result.isSuccess()).isTrue();
+    }
+
+    @Test
+    void testInvalidDimensionCode_throwsINVALID_DIMENSION_TYPE() {
+        assertThatThrownBy(() -> postingEngine.post(requestWithCombination(Map.of("NOT-A-TYPE", "CC-MFG"))))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "INVALID_DIMENSION_TYPE");
+    }
+
+    @Test
+    void testInvalidDimensionValue_throwsDIMENSION_VALUE_NOT_FOUND() {
+        FinanceDimension costCentreDim = requiredCostCentreDimension();
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.COST_CENTRE))
+                .thenReturn(Optional.of(costCentreDim));
+        when(dimensionValueRepository
+                .findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-UNKNOWN"))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> postingEngine.post(requestWithCombination(Map.of("COST_CENTRE", "CC-UNKNOWN"))))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "DIMENSION_VALUE_NOT_FOUND");
+    }
+
+    @Test
+    void testMissingRequiredDimension_throwsMISSING_REQUIRED_DIMENSION() {
+        when(financeDimensionRepository.findByLedgerIdAndIsActiveTrue(ledgerId))
+                .thenReturn(List.of(requiredCostCentreDimension()));
+
+        assertThatThrownBy(() -> postingEngine.post(requestWithCombination(Map.of())))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "MISSING_REQUIRED_DIMENSION");
+    }
+
+    @Test
+    void testOptionalDimensionAbsent_passes() {
+        FinanceDimension optionalProductDim = FinanceDimension.builder().id(UUID.randomUUID())
+                .dimensionType(DimensionType.PRODUCT).code("PRODUCT").name("Product").isRequired(false).build();
+        when(financeDimensionRepository.findByLedgerIdAndIsActiveTrue(ledgerId))
+                .thenReturn(List.of(optionalProductDim));
+
+        PostingResult result = postingEngine.post(requestWithCombination(Map.of()));
+
+        assertThat(result.isSuccess()).isTrue();
     }
 }

@@ -259,13 +259,21 @@ public class PostingEngine {
     }
 
     // ── Rule 5 — every non-natural-account dimension value in the account ──
-    // ── combination must exist and be active for this Ledger. ──────────────
+    // ── combination must exist and be active for this Ledger, and every ────
+    // ── required dimension (other than NATURAL_ACCOUNT, which is carried ───
+    // ── via naturalAccountValueId instead of the combination map) must be ──
+    // ── present on every line. ───────────────────────────────────────────
     private void validateDimensionValues(List<PostingLineRequest> lines, UUID ledgerId) {
+        List<FinanceDimension> requiredDimensions = financeDimensionRepository
+                .findByLedgerIdAndIsActiveTrue(ledgerId).stream()
+                .filter(FinanceDimension::isRequired)
+                .filter(dimension -> dimension.getDimensionType() != DimensionType.NATURAL_ACCOUNT)
+                .toList();
+
         for (PostingLineRequest line : lines) {
-            Map<String, String> combination = line.getAccountCombination();
-            if (combination == null) {
-                continue;
-            }
+            Map<String, String> combination = line.getAccountCombination() != null
+                    ? line.getAccountCombination() : Map.of();
+
             for (Map.Entry<String, String> entry : combination.entrySet()) {
                 DimensionType type;
                 try {
@@ -286,6 +294,14 @@ public class PostingEngine {
                         .orElseThrow(() -> new EvyoogException("DIMENSION_VALUE_NOT_FOUND",
                                 "Dimension value not found for " + entry.getKey() + " = " + entry.getValue(),
                                 HttpStatus.NOT_FOUND));
+            }
+
+            for (FinanceDimension required : requiredDimensions) {
+                if (!combination.containsKey(required.getDimensionType().name())) {
+                    throw new EvyoogException("MISSING_REQUIRED_DIMENSION",
+                            "Required dimension '" + required.getDimensionType() + "' (" + required.getName() +
+                                    ") is missing from account combination.", HttpStatus.BAD_REQUEST);
+                }
             }
         }
     }

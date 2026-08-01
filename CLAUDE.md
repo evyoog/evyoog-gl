@@ -875,3 +875,39 @@ private Map<String, String> accountCombination;
   Takes: currentPassword, newPassword
   Updates auth.users.password_hash, sets must_change_pwd=false
   Invalidates existing refresh tokens
+
+### GL-04/GL-15 — multi-dimension account combination (CRITICAL — corrects a
+### wrong build-prompt assumption)
+- `gl.journal_line.account_combination` JSONB keys are the **`DimensionType`
+  enum constant name** (`NATURAL_ACCOUNT`, `COST_CENTRE`, `PRODUCT`, ...) —
+  NOT the Finance Dimension's `code` field. `PostingEngine.validateDimensionValues()`
+  parses each key via `DimensionType.valueOf(entry.getKey())`; a build prompt
+  that says to use the dimension code (e.g. `"COST-CTR"`) as the JSONB key is
+  wrong and contradicts this already-tested behaviour — `seed-demo-data.sh`
+  and every IT fixture already use `NATURAL_ACCOUNT` as the key while the
+  Finance Dimension's own `code` stays `NAT-ACCT`. Do not change this.
+- `naturalAccountValueId` is passed to the Posting Engine as its own field on
+  `PostingLineRequest`/`CreateJournalLineRequest` — it is never extracted from
+  `account_combination`. NATURAL_ACCOUNT is therefore exempt from the
+  "required dimension must appear in the combination" rule below; every other
+  required dimension type is not.
+- Added Rule 9 to `PostingEngine.validateDimensionValues()`: for every active
+  Finance Dimension on the Ledger where `isRequired = true` (excluding
+  NATURAL_ACCOUNT), each journal line's `account_combination` must contain
+  that dimension type as a key, else `400 MISSING_REQUIRED_DIMENSION`.
+  Optional dimensions (e.g. PRODUCT) may simply be absent.
+- `FinanceDimensionRepository.findByLedgerIdAndIsActiveTrue(ledgerId)` added
+  to load the ledger's dimension set once per validation call.
+- Dimension Value CRUD (`DimensionValueController`, `/api/v1/gl/dimension-values`)
+  and Finance Dimension CRUD already supported COST_CENTRE/PRODUCT generically
+  before this session — no new endpoints were needed, only the missing-required
+  -dimension check above.
+- Did NOT add an `allow_dynamic_insert` column to `gl.ledger` as one build
+  prompt suggested — nothing in scope consumes it (no auto-vivify-on-post
+  logic exists), so it would have been a dead column. Add it only alongside
+  the feature that reads it.
+- `seed-demo-data.sh` now also creates `COST-CTR` (COST_CENTRE, required) and
+  `PRODUCT` (PRODUCT, optional) Finance Dimensions + values (CC-MFG/CC-SAL/
+  CC-ADM/CC-RND, GATE-VLV/BALL-VLV/BFLY-VLV/SPARES/SERVICES), and all 10 demo
+  journals now carry `COST_CENTRE` on every line (`PRODUCT` on revenue lines
+  only) — step count is now [1/10]..[10/10].
