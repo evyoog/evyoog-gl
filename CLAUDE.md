@@ -911,3 +911,15 @@ private Map<String, String> accountCombination;
   CC-ADM/CC-RND, GATE-VLV/BALL-VLV/BFLY-VLV/SPARES/SERVICES), and all 10 demo
   journals now carry `COST_CENTRE` on every line (`PRODUCT` on revenue lines
   only) — step count is now [1/10]..[10/10].
+
+### GL-04 Multi-Dimension Account Combination (V27 — July 2026)
+- account_combination JSONB key = DimensionType enum name (NOT dimension code)
+  Correct: {"COST_CENTRE": "CC-MFG", "NATURAL_ACCOUNT": "5100", "PRODUCT": "GATE-VLV"}
+  Wrong:   {"COST-CTR": "CC-MFG", "NAT-ACCT": "5100"}
+- allow_dynamic_insert NOT added to gl.ledger (deferred — no consumer yet)
+- Dimension CRUD was already generic across all types from earlier build
+- PostingEngine validates required dimensions present (excludes NATURAL_ACCOUNT
+  since that's carried via naturalAccountValueId not the combination map)
+- Cost Centre: required dimension, 4 values (CC-MFG, CC-SAL, CC-ADM, CC-RND)
+- Product: optional dimension, 5 values (GATE-VLV, BALL-VLV, BFLY-VLV, SPARES, SERVICES)
+- Test count: 497 (324 unit + 173 integration)
