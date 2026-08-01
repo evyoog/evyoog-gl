@@ -923,3 +923,11 @@ private Map<String, String> accountCombination;
 - Cost Centre: required dimension, 4 values (CC-MFG, CC-SAL, CC-ADM, CC-RND)
 - Product: optional dimension, 5 values (GATE-VLV, BALL-VLV, BFLY-VLV, SPARES, SERVICES)
 - Test count: 497 (324 unit + 173 integration)
+
+## AUTH — GET /api/v1/auth/users/{id}/roles fix (July 2026)
+- GET handler was missing — only POST and DELETE were registered
+- Fixed: GET now returns List<UserRoleAssignmentResponse>
+- Permission: gl:users:view
+- No new migrations, DTOs or repository methods needed
+- UserRoleRepository.findByUserId already existed
+- Test count: 324 unit tests passing
