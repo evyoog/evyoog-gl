@@ -89,6 +89,13 @@ public class UserController {
         return ApiResponse.created(service.assignRole(id, request, userId));
     }
 
+    @GetMapping("/{id}/roles")
+    @PreAuthorize("hasAuthority('gl:users:view')")
+    @Operation(summary = "List all role assignments for a user")
+    public ApiResponse<List<UserRoleAssignmentResponse>> listRoles(@PathVariable UUID id) {
+        return ApiResponse.ok(service.listRoles(id));
+    }
+
     @DeleteMapping("/{id}/roles/{roleId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @PreAuthorize("hasAuthority('gl:users:edit')")

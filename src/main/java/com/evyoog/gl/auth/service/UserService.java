@@ -141,6 +141,16 @@ public class UserService {
         return response;
     }
 
+    @Transactional(readOnly = true)
+    public List<UserRoleAssignmentResponse> listRoles(UUID userId) {
+        findOrThrow(userId);
+        return userRoleRepository.findByUserId(userId).stream()
+                .map(ur -> new UserRoleAssignmentResponse(
+                        ur.getId(), ur.getRole().getId(), ur.getRole().getCode(), ur.getRole().getName(),
+                        ur.getLegalEntity().getId(), ur.getLegalEntity().getCode()))
+                .toList();
+    }
+
     @Transactional
     public void removeRole(UUID userId, UUID roleId, String performedBy) {
         findOrThrow(userId);
