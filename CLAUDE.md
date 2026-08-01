@@ -931,3 +931,8 @@ private Map<String, String> accountCombination;
 - No new migrations, DTOs or repository methods needed
 - UserRoleRepository.findByUserId already existed
 - Test count: 324 unit tests passing
+
+## AUTH — change-password error envelope deviation
+- POST /api/v1/auth/change-password error response uses:
+  {status, code, message, field, timestamp} NOT standard ApiResponse envelope
+  Codes: INVALID_CURRENT_PASSWORD | WEAK_PASSWORD
