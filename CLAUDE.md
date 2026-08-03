@@ -936,3 +936,8 @@ private Map<String, String> accountCombination;
 - POST /api/v1/auth/change-password error response uses:
   {status, code, message, field, timestamp} NOT standard ApiResponse envelope
   Codes: INVALID_CURRENT_PASSWORD | WEAK_PASSWORD
+
+## Account Ledger — accountCombination in response (August 2026)
+- AccountLedgerEntry DTO now includes Map<String, String> accountCombination
+- Mapped from line.getAccountCombination() in AccountLedgerService
+- 324 unit tests passing
