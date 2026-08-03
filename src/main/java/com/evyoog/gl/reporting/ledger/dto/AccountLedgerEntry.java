@@ -5,6 +5,7 @@ import lombok.Builder;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Map;
 import java.util.UUID;
 
 @Builder
@@ -25,6 +26,7 @@ public record AccountLedgerEntry(
         String gstType,
         Boolean tdsApplicable,
         String tdsSection,
+        Map<String, String> accountCombination,
         Instant createdAt
 ) {
 }

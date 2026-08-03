@@ -85,6 +85,7 @@ public class AccountLedgerService {
                     .gstType(line.getGstType())
                     .tdsApplicable(line.getTdsApplicable())
                     .tdsSection(line.getTdsSection())
+                    .accountCombination(line.getAccountCombination())
                     .createdAt(line.getCreatedAt())
                     .build());
         }
