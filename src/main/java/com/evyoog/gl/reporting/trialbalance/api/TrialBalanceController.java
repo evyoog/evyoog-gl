@@ -22,11 +22,14 @@ public class TrialBalanceController {
 
     @GetMapping("/api/v1/gl/reports/trial-balance")
     @PreAuthorize("hasAuthority('gl:trial-balance:view')")
-    @Operation(summary = "Generate the Trial Balance for a Legal Entity and Period")
+    @Operation(summary = "Generate the Trial Balance for a Legal Entity and Period, "
+            + "optionally filtered by Cost Centre and/or Product segment")
     public ApiResponse<TrialBalanceResponse> getTrialBalance(
             @RequestParam UUID legalEntityId,
-            @RequestParam UUID periodId) {
-        return ApiResponse.ok(trialBalanceService.generate(legalEntityId, periodId));
+            @RequestParam UUID periodId,
+            @RequestParam(required = false) String costCentre,
+            @RequestParam(required = false) String product) {
+        return ApiResponse.ok(trialBalanceService.generate(legalEntityId, periodId, costCentre, product));
     }
 
     @GetMapping("/api/v1/gl/reports/trial-balance/export")
@@ -35,8 +38,10 @@ public class TrialBalanceController {
     public ApiResponse<TrialBalanceResponse> exportTrialBalance(
             @RequestParam UUID legalEntityId,
             @RequestParam UUID periodId,
-            @RequestParam(required = false, defaultValue = "PDF") String format) {
-        return new ApiResponse<>(true, trialBalanceService.generate(legalEntityId, periodId),
+            @RequestParam(required = false, defaultValue = "PDF") String format,
+            @RequestParam(required = false) String costCentre,
+            @RequestParam(required = false) String product) {
+        return new ApiResponse<>(true, trialBalanceService.generate(legalEntityId, periodId, costCentre, product),
                 "Export format '" + format + "' is not yet implemented — returning structured JSON. "
                         + "PDF/Excel generation is planned for Phase 2.",
                 null);

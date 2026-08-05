@@ -14,6 +14,7 @@ import com.evyoog.gl.period.repository.AccountingPeriodRepository;
 import com.evyoog.gl.posting.domain.AccountBalance;
 import com.evyoog.gl.posting.repository.AccountBalanceRepository;
 import com.evyoog.gl.reporting.trialbalance.dto.TrialBalanceResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,7 +49,7 @@ class TrialBalanceServiceTest {
     @BeforeEach
     void setUp() {
         service = new TrialBalanceService(legalEntityLedgerRepository, accountBalanceRepository,
-                accountingPeriodRepository, legalEntityRepository);
+                accountingPeriodRepository, legalEntityRepository, new ObjectMapper());
 
         legalEntityId = UUID.randomUUID();
         periodId = UUID.randomUUID();
@@ -238,5 +239,91 @@ class TrialBalanceServiceTest {
         TrialBalanceResponse response = service.generate(legalEntityId, periodId);
 
         assertThat(response.totalCredit()).isEqualByComparingTo("150.00");
+    }
+
+    @Test
+    void testTrialBalance_noCostCentreFilter_returnsAllLines() {
+        DimensionValue cash = account("1000", AccountQualifier.ASSET, NormalBalance.DR, true);
+        DimensionValue revenue = account("4000", AccountQualifier.REVENUE, NormalBalance.CR, true);
+        stubHappyPath(List.of(
+                balance(cash, BigDecimal.ZERO, new BigDecimal("100.00"), BigDecimal.ZERO),
+                balance(revenue, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("100.00"))
+        ), FinanceMode.THICK);
+
+        TrialBalanceResponse response = service.generate(legalEntityId, periodId, null, null);
+
+        assertThat(response.lines()).hasSize(2);
+        assertThat(response.segmentFilters().costCentre()).isNull();
+        assertThat(response.segmentFilters().product()).isNull();
+    }
+
+    @Test
+    void testTrialBalance_withCostCentreFilter_returnsFilteredLines() {
+        when(legalEntityLedgerRepository.findPrimaryLedgerByLegalEntityId(legalEntityId))
+                .thenReturn(Optional.of(ledger(FinanceMode.THICK)));
+        DimensionValue cash = account("1000", AccountQualifier.ASSET, NormalBalance.DR, true);
+        when(accountBalanceRepository.findByLegalEntityIdAndAccountingPeriodIdAndCombinationFilter(
+                        legalEntityId, periodId, "{\"COST_CENTRE\":\"CC-MFG\"}"))
+                .thenReturn(List.of(balance(cash, BigDecimal.ZERO, new BigDecimal("100.00"), BigDecimal.ZERO)));
+        when(accountingPeriodRepository.findById(periodId)).thenReturn(Optional.of(period));
+        when(legalEntityRepository.findById(legalEntityId)).thenReturn(Optional.of(legalEntity));
+
+        TrialBalanceResponse response = service.generate(legalEntityId, periodId, "CC-MFG", null);
+
+        assertThat(response.lines()).hasSize(1);
+        assertThat(response.segmentFilters().costCentre()).isEqualTo("CC-MFG");
+        assertThat(response.segmentFilters().product()).isNull();
+    }
+
+    @Test
+    void testTrialBalance_withProductFilter_returnsFilteredLines() {
+        when(legalEntityLedgerRepository.findPrimaryLedgerByLegalEntityId(legalEntityId))
+                .thenReturn(Optional.of(ledger(FinanceMode.THICK)));
+        DimensionValue revenue = account("4000", AccountQualifier.REVENUE, NormalBalance.CR, true);
+        when(accountBalanceRepository.findByLegalEntityIdAndAccountingPeriodIdAndCombinationFilter(
+                        legalEntityId, periodId, "{\"PRODUCT\":\"GATE-VLV\"}"))
+                .thenReturn(List.of(balance(revenue, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("100.00"))));
+        when(accountingPeriodRepository.findById(periodId)).thenReturn(Optional.of(period));
+        when(legalEntityRepository.findById(legalEntityId)).thenReturn(Optional.of(legalEntity));
+
+        TrialBalanceResponse response = service.generate(legalEntityId, periodId, null, "GATE-VLV");
+
+        assertThat(response.lines()).hasSize(1);
+        assertThat(response.segmentFilters().product()).isEqualTo("GATE-VLV");
+    }
+
+    @Test
+    void testTrialBalance_withBothFilters_returnsIntersection() {
+        when(legalEntityLedgerRepository.findPrimaryLedgerByLegalEntityId(legalEntityId))
+                .thenReturn(Optional.of(ledger(FinanceMode.THICK)));
+        DimensionValue revenue = account("4000", AccountQualifier.REVENUE, NormalBalance.CR, true);
+        when(accountBalanceRepository.findByLegalEntityIdAndAccountingPeriodIdAndCombinationFilter(
+                        legalEntityId, periodId, "{\"COST_CENTRE\":\"CC-SAL\",\"PRODUCT\":\"GATE-VLV\"}"))
+                .thenReturn(List.of(balance(revenue, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("50.00"))));
+        when(accountingPeriodRepository.findById(periodId)).thenReturn(Optional.of(period));
+        when(legalEntityRepository.findById(legalEntityId)).thenReturn(Optional.of(legalEntity));
+
+        TrialBalanceResponse response = service.generate(legalEntityId, periodId, "CC-SAL", "GATE-VLV");
+
+        assertThat(response.lines()).hasSize(1);
+        assertThat(response.lines().get(0).creditBalance()).isEqualByComparingTo("50.00");
+    }
+
+    @Test
+    void testTrialBalance_invalidCostCentre_returnsEmptyLines() {
+        when(legalEntityLedgerRepository.findPrimaryLedgerByLegalEntityId(legalEntityId))
+                .thenReturn(Optional.of(ledger(FinanceMode.THICK)));
+        when(accountBalanceRepository.findByLegalEntityIdAndAccountingPeriodIdAndCombinationFilter(
+                        legalEntityId, periodId, "{\"COST_CENTRE\":\"NO-SUCH-CC\"}"))
+                .thenReturn(List.of());
+        when(accountingPeriodRepository.findById(periodId)).thenReturn(Optional.of(period));
+        when(legalEntityRepository.findById(legalEntityId)).thenReturn(Optional.of(legalEntity));
+
+        TrialBalanceResponse response = service.generate(legalEntityId, periodId, "NO-SUCH-CC", null);
+
+        assertThat(response.lines()).isEmpty();
+        assertThat(response.totalDebit()).isEqualByComparingTo("0");
+        assertThat(response.totalCredit()).isEqualByComparingTo("0");
+        assertThat(response.isBalanced()).isTrue();
     }
 }

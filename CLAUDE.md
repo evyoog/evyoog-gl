@@ -941,3 +941,43 @@ private Map<String, String> accountCombination;
 - AccountLedgerEntry DTO now includes Map<String, String> accountCombination
 - Mapped from line.getAccountCombination() in AccountLedgerService
 - 324 unit tests passing
+
+## GL-26 — Segment Reporting (August 2026)
+- Trial Balance filter: `GET /api/v1/gl/reports/trial-balance` and its
+  `/export` sibling take optional `costCentre`/`product` query params.
+  `TrialBalanceService.generate(...)` gained a 4-arg overload — the original
+  2-arg method now just delegates with nulls, so existing callers/tests are
+  unaffected. Filtering uses a new native query
+  (`AccountBalanceRepository.findByLegalEntityIdAndAccountingPeriodIdAndCombinationFilter`)
+  with the JSONB `@>` containment operator, backed by the existing GIN index.
+- **Behavioural split on empty results**: with no filter, zero balances still
+  throws `404 NO_BALANCES_FOUND` (unchanged, pre-existing behaviour — signals
+  "nothing posted yet"). With a filter applied, zero matches returns
+  `200 OK` with an empty `lines[]` (a valid "no activity for this segment"
+  result, not an error) — the 404 path is only reachable via the unfiltered
+  `findByLegalEntityIdAndAccountingPeriodId` branch.
+- New endpoint `GET /api/v1/gl/reports/pl-by-segment` (package
+  `com.evyoog.gl.reporting.segment`) pivots Revenue/Expense account_balance
+  rows by any Finance Dimension segment (not hardcoded to COST_CENTRE/
+  PRODUCT — validated via `DimensionType.valueOf`, with `NATURAL_ACCOUNT`
+  explicitly rejected since it's never a JSONB key in `account_combination`).
+  Reuses the existing `gl:pl:view` permission — no new permission migration,
+  same "one epic, shared permission codes" precedent as Period Management.
+- **Postgres GROUP BY pitfall (only caught by the Testcontainers IT, not
+  Mockito unit tests)**: the pivot query originally repeated
+  `ab.account_combination ->> :segmentType` in both SELECT and GROUP BY.
+  Spring Data binds each `:segmentType` occurrence to its own JDBC `?`
+  placeholder, and Postgres treats two separately-bound placeholders as
+  distinct expression nodes even when the bound value is identical — it
+  rejects the query with "column must appear in the GROUP BY clause or be
+  used in an aggregate function". Fixed by extracting the segment value once
+  in a derived subquery and grouping on the derived column instead. Any
+  future native `@Query` that both projects and groups by the same
+  parameterized expression must use this derived-subquery pattern, not repeat
+  the expression — a pure mocked-repository unit test cannot catch this class
+  of bug, only a real-Postgres IT can.
+- `account_qualifier` on `dimension_value` reads back as plain text in native
+  queries (`@Enumerated(STRING)` column), so `IN ('REVENUE','EXPENSE')` and
+  string comparisons against `row.getAccountQualifier()` work without enum
+  casting.
+- 392 unit tests + full Testcontainers IT suite passing (`mvn verify`).

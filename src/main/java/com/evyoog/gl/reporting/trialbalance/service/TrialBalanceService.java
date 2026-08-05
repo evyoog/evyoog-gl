@@ -11,8 +11,11 @@ import com.evyoog.gl.period.domain.AccountingPeriod;
 import com.evyoog.gl.period.repository.AccountingPeriodRepository;
 import com.evyoog.gl.posting.domain.AccountBalance;
 import com.evyoog.gl.posting.repository.AccountBalanceRepository;
+import com.evyoog.gl.reporting.trialbalance.dto.SegmentFilters;
 import com.evyoog.gl.reporting.trialbalance.dto.TrialBalanceLine;
 import com.evyoog.gl.reporting.trialbalance.dto.TrialBalanceResponse;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -20,7 +23,9 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -32,8 +37,13 @@ public class TrialBalanceService {
     private final AccountBalanceRepository accountBalanceRepository;
     private final AccountingPeriodRepository accountingPeriodRepository;
     private final LegalEntityRepository legalEntityRepository;
+    private final ObjectMapper objectMapper;
 
     public TrialBalanceResponse generate(UUID legalEntityId, UUID periodId) {
+        return generate(legalEntityId, periodId, null, null);
+    }
+
+    public TrialBalanceResponse generate(UUID legalEntityId, UUID periodId, String costCentre, String product) {
 
         Ledger ledger = legalEntityLedgerRepository
                 .findPrimaryLedgerByLegalEntityId(legalEntityId)
@@ -46,14 +56,22 @@ public class TrialBalanceService {
                     HttpStatus.UNPROCESSABLE_ENTITY);
         }
 
-        List<AccountBalance> balances = accountBalanceRepository
-                .findByLegalEntityIdAndAccountingPeriodId(legalEntityId, periodId);
+        boolean hasFilter = isNotBlank(costCentre) || isNotBlank(product);
 
-        if (balances.isEmpty()) {
-            throw new EvyoogException("NO_BALANCES_FOUND",
-                    "No account balances found for this Legal Entity and Period. "
-                            + "Post some journal entries first.",
-                    HttpStatus.NOT_FOUND);
+        List<AccountBalance> balances;
+        if (hasFilter) {
+            balances = accountBalanceRepository.findByLegalEntityIdAndAccountingPeriodIdAndCombinationFilter(
+                    legalEntityId, periodId, toCombinationFilterJson(costCentre, product));
+        } else {
+            balances = accountBalanceRepository
+                    .findByLegalEntityIdAndAccountingPeriodId(legalEntityId, periodId);
+
+            if (balances.isEmpty()) {
+                throw new EvyoogException("NO_BALANCES_FOUND",
+                        "No account balances found for this Legal Entity and Period. "
+                                + "Post some journal entries first.",
+                        HttpStatus.NOT_FOUND);
+            }
         }
 
         List<TrialBalanceLine> lines = balances.stream()
@@ -94,7 +112,29 @@ public class TrialBalanceService {
                 .accountsWithActivity((int) lines.stream()
                         .filter(this::hasActivityLine)
                         .count())
+                .segmentFilters(new SegmentFilters(
+                        isNotBlank(costCentre) ? costCentre : null,
+                        isNotBlank(product) ? product : null))
                 .build();
+    }
+
+    private boolean isNotBlank(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private String toCombinationFilterJson(String costCentre, String product) {
+        Map<String, String> filter = new LinkedHashMap<>();
+        if (isNotBlank(costCentre)) {
+            filter.put("COST_CENTRE", costCentre);
+        }
+        if (isNotBlank(product)) {
+            filter.put("PRODUCT", product);
+        }
+        try {
+            return objectMapper.writeValueAsString(filter);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize segment filter", e);
+        }
     }
 
     private TrialBalanceLine toTrialBalanceLine(AccountBalance ab) {

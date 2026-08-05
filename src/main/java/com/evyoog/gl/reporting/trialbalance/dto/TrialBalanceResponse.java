@@ -22,6 +22,7 @@ public record TrialBalanceResponse(
         BigDecimal totalCredit,
         boolean isBalanced,
         Integer totalAccounts,
-        Integer accountsWithActivity
+        Integer accountsWithActivity,
+        SegmentFilters segmentFilters
 ) {
 }
