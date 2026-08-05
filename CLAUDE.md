@@ -981,3 +981,13 @@ private Map<String, String> accountCombination;
   string comparisons against `row.getAccountQualifier()` work without enum
   casting.
 - 392 unit tests + full Testcontainers IT suite passing (`mvn verify`).
+
+## GL-26 Segment Reporting (August 2026)
+- GET /api/v1/gl/reports/trial-balance now accepts optional costCentre + product params
+- Uses JSONB @> containment operator with GIN index — NOT LIKE or cast to text
+- GET /api/v1/gl/reports/pl-by-segment?segmentType=COST_CENTRE|PRODUCT
+- segmentType=NATURAL_ACCOUNT is rejected (400)
+- Reuses gl:pl:view permission — no new permission needed
+- Native query bug: repeated named params in SELECT + GROUP BY bind to separate
+  JDBC placeholders — extract segment value in derived subquery instead
+- Test count: 392 unit tests + full IT suite passing
