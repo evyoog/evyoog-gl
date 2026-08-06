@@ -16,6 +16,7 @@ public record LedgerResponse(
         LedgerCategory ledgerCategory,
         String functionalCurrency,
         AccountingStandard accountingStandard,
+        boolean allowDynamicInsert,
         boolean isActive,
         Instant createdAt,
         Instant updatedAt

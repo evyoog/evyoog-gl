@@ -1,6 +1,7 @@
 package com.evyoog.gl.posting.service;
 
 import com.evyoog.gl.aie.repository.SlaEventLogRepository;
+import com.evyoog.gl.combination.service.AccountCombinationService;
 import com.evyoog.gl.common.audit.service.AuditService;
 import com.evyoog.gl.common.exception.EvyoogException;
 import com.evyoog.gl.dimension.domain.DimensionType;
@@ -46,10 +47,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -66,6 +70,7 @@ class PostingEngineTest {
     @Mock private FinanceDimensionRepository financeDimensionRepository;
     @Mock private SlaEventLogRepository slaEventLogRepository;
     @Mock private PeriodStatusService periodStatusService;
+    @Mock private AccountCombinationService accountCombinationService;
     @Mock private AuditService auditService;
 
     private PostingEngine postingEngine;
@@ -88,7 +93,8 @@ class PostingEngineTest {
         postingEngine = new PostingEngine(legalEntityLedgerRepository, legalEntityRepository,
                 accountingPeriodRepository, journalSourceRepository, journalCategoryRepository,
                 journalHeaderRepository, accountBalanceRepository, dimensionValueRepository,
-                financeDimensionRepository, slaEventLogRepository, periodStatusService, auditService);
+                financeDimensionRepository, slaEventLogRepository, periodStatusService,
+                accountCombinationService, auditService);
 
         legalEntityId = UUID.randomUUID();
         ledgerId = UUID.randomUUID();
@@ -472,5 +478,56 @@ class PostingEngineTest {
         PostingResult result = postingEngine.post(requestWithCombination(Map.of()));
 
         assertThat(result.isSuccess()).isTrue();
+    }
+
+    // ── Rule 10 — account combination registry validation ──────────────────
+
+    @Test
+    void testAccountCombination_emptyCombination_skipsRegistryCheck() {
+        PostingRequest request = balancedThickRequest();
+
+        PostingResult result = postingEngine.post(request);
+
+        assertThat(result.isSuccess()).isTrue();
+        verifyNoInteractions(accountCombinationService);
+    }
+
+    @Test
+    void testAccountCombination_registryRejectsCombination_propagatesException() {
+        ledger.setAllowDynamicInsert(false);
+        FinanceDimension costCentreDim = requiredCostCentreDimension();
+        when(financeDimensionRepository.findByLedgerIdAndIsActiveTrue(ledgerId))
+                .thenReturn(List.of(costCentreDim));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.COST_CENTRE))
+                .thenReturn(Optional.of(costCentreDim));
+        when(dimensionValueRepository
+                .findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-MFG"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(CC_MFG_ID).code("CC-MFG").build()));
+        when(accountCombinationService.validate(eq(ledgerId), eq(legalEntityId), any(), eq(false), anyString()))
+                .thenThrow(new EvyoogException("INVALID_ACCOUNT_COMBINATION", "not approved"));
+
+        assertThatThrownBy(() -> postingEngine.post(requestWithCombination(Map.of("COST_CENTRE", "CC-MFG"))))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "INVALID_ACCOUNT_COMBINATION");
+    }
+
+    @Test
+    void testAccountCombination_dynamicInsertFlagReadFromLedger_passedToService() {
+        ledger.setAllowDynamicInsert(false);
+        FinanceDimension costCentreDim = requiredCostCentreDimension();
+        when(financeDimensionRepository.findByLedgerIdAndIsActiveTrue(ledgerId))
+                .thenReturn(List.of(costCentreDim));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.COST_CENTRE))
+                .thenReturn(Optional.of(costCentreDim));
+        when(dimensionValueRepository
+                .findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-MFG"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(CC_MFG_ID).code("CC-MFG").build()));
+
+        postingEngine.post(requestWithCombination(Map.of("COST_CENTRE", "CC-MFG")));
+
+        verify(accountCombinationService, times(2))
+                .validate(eq(ledgerId), eq(legalEntityId), any(), eq(false), anyString());
     }
 }

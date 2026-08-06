@@ -203,6 +203,136 @@ class PostingEngineIT {
                 .hasFieldOrPropertyWithValue("status", org.springframework.http.HttpStatus.BAD_REQUEST);
     }
 
+    // ── Account Combination Registry ────────────────────────────────────────
+
+    @Test
+    void testAccountCombinationRegistry_autoRegisteredOnFirstPost_reusedOnSecond() throws Exception {
+        Fixture fx = buildFixture("THICK");
+        openPeriod(fx);
+        UUID costCentreDimId = createFinanceDimensionOfType(fx.ledgerId, "CC-DIM", "COST_CENTRE", false);
+        createDimensionValue(costCentreDimId, "CC-MFG", null);
+
+        PostingRequest request = balancedRequest(fx);
+        request.setLines(List.of(
+                PostingLineRequest.builder().naturalAccountValueId(fx.cashAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-MFG"))
+                        .debitAmount(new BigDecimal("100.00")).build(),
+                PostingLineRequest.builder().naturalAccountValueId(fx.revenueAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-MFG"))
+                        .creditAmount(new BigDecimal("100.00")).build()));
+
+        postingEngine.post(request);
+        postingEngine.post(request);
+
+        String listResponse = mockMvc.perform(get("/api/v1/gl/account-combinations")
+                        .param("ledgerId", fx.ledgerId.toString())
+                        .param("legalEntityId", fx.legalEntityId.toString()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(objectMapper.readTree(listResponse).at("/data").size()).isEqualTo(1);
+        assertThat(objectMapper.readTree(listResponse).at("/data/0/isDynamic").asBoolean()).isTrue();
+        assertThat(objectMapper.readTree(listResponse).at("/data/0/combinationCode").asText()).contains("CC-MFG");
+    }
+
+    @Test
+    void testAccountCombinationRegistry_dynamicInsertOff_unknownCombinationRejected() throws Exception {
+        Fixture fx = buildFixture("THICK");
+        openPeriod(fx);
+        UUID costCentreDimId = createFinanceDimensionOfType(fx.ledgerId, "CC-DIM", "COST_CENTRE", false);
+        createDimensionValue(costCentreDimId, "CC-SAL", null);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/gl/ledgers/{id}/dynamic-insert", fx.ledgerId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("allowDynamicInsert", false))))
+                .andExpect(status().isOk());
+
+        PostingRequest request = balancedRequest(fx);
+        request.setLines(List.of(
+                PostingLineRequest.builder().naturalAccountValueId(fx.cashAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-SAL"))
+                        .debitAmount(new BigDecimal("100.00")).build(),
+                PostingLineRequest.builder().naturalAccountValueId(fx.revenueAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-SAL"))
+                        .creditAmount(new BigDecimal("100.00")).build()));
+
+        assertThatThrownBy(() -> postingEngine.post(request))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "INVALID_ACCOUNT_COMBINATION");
+    }
+
+    @Test
+    void testAccountCombinationRegistry_preApprovedCombination_dynamicInsertOff_posts() throws Exception {
+        Fixture fx = buildFixture("THICK");
+        openPeriod(fx);
+        UUID costCentreDimId = createFinanceDimensionOfType(fx.ledgerId, "CC-DIM", "COST_CENTRE", false);
+        createDimensionValue(costCentreDimId, "CC-ADM", null);
+
+        mockMvc.perform(post("/api/v1/gl/account-combinations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "ledgerId", fx.ledgerId.toString(),
+                                "legalEntityId", fx.legalEntityId.toString(),
+                                "combination", Map.of("COST_CENTRE", "CC-ADM"),
+                                "description", "Pre-approved"))))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/gl/ledgers/{id}/dynamic-insert", fx.ledgerId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("allowDynamicInsert", false))))
+                .andExpect(status().isOk());
+
+        PostingRequest request = balancedRequest(fx);
+        request.setLines(List.of(
+                PostingLineRequest.builder().naturalAccountValueId(fx.cashAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-ADM"))
+                        .debitAmount(new BigDecimal("100.00")).build(),
+                PostingLineRequest.builder().naturalAccountValueId(fx.revenueAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-ADM"))
+                        .creditAmount(new BigDecimal("100.00")).build()));
+
+        PostingResult result = postingEngine.post(request);
+
+        assertThat(result.isSuccess()).isTrue();
+    }
+
+    @Test
+    void testAccountCombinationRegistry_deactivatedCombination_blocksPosting() throws Exception {
+        Fixture fx = buildFixture("THICK");
+        openPeriod(fx);
+        UUID costCentreDimId = createFinanceDimensionOfType(fx.ledgerId, "CC-DIM", "COST_CENTRE", false);
+        createDimensionValue(costCentreDimId, "CC-RND", null);
+
+        String createResponse = mockMvc.perform(post("/api/v1/gl/account-combinations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "ledgerId", fx.ledgerId.toString(),
+                                "legalEntityId", fx.legalEntityId.toString(),
+                                "combination", Map.of("COST_CENTRE", "CC-RND"),
+                                "description", "To be deactivated"))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        UUID combinationId = UUID.fromString(objectMapper.readTree(createResponse).at("/data/id").asText());
+
+        mockMvc.perform(post("/api/v1/gl/account-combinations/{id}/deactivate", combinationId))
+                .andExpect(status().isOk());
+
+        PostingRequest request = balancedRequest(fx);
+        request.setLines(List.of(
+                PostingLineRequest.builder().naturalAccountValueId(fx.cashAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-RND"))
+                        .debitAmount(new BigDecimal("100.00")).build(),
+                PostingLineRequest.builder().naturalAccountValueId(fx.revenueAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-RND"))
+                        .creditAmount(new BigDecimal("100.00")).build()));
+
+        assertThatThrownBy(() -> postingEngine.post(request))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "COMBINATION_INACTIVE");
+    }
+
     private UUID createFinanceDimensionOfType(UUID ledgerId, String code, String dimensionType, boolean isRequired) throws Exception {
         Map<String, Object> request = new HashMap<>();
         request.put("ledgerId", ledgerId.toString());

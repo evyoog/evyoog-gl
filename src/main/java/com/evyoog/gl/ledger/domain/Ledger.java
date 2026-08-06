@@ -8,6 +8,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -47,4 +48,8 @@ public class Ledger extends AuditableEntity {
     @Enumerated(EnumType.STRING)
     @Column(name = "accounting_standard", nullable = false, length = 20)
     private AccountingStandard accountingStandard;
+
+    @Builder.Default
+    @Column(name = "allow_dynamic_insert", nullable = false)
+    private boolean allowDynamicInsert = true;
 }

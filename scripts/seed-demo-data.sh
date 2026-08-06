@@ -11,7 +11,9 @@
 #   7. 10 posted journal entries covering opening balances, sales, purchases,
 #      payroll, and depreciation — each line carries COST_CENTRE (and PRODUCT
 #      on revenue lines) in its account combination
-#   8. Closes the APR-2025 period
+#   8. Confirms Dynamic Insert is enabled on the ledger (auto-registers
+#      account combinations in the registry on first posting)
+#   9. Closes the APR-2025 period
 #
 # Usage:
 #   ./scripts/seed-demo-data.sh <legalEntityId>
@@ -79,7 +81,7 @@ if [[ -z "$ACCESS_TOKEN" ]]; then
 fi
 echo "  Logged in."
 
-echo "==> [1/10] Checking for existing ledger on Legal Entity ${LEGAL_ENTITY_ID}"
+echo "==> [1/11] Checking for existing ledger on Legal Entity ${LEGAL_ENTITY_ID}"
 EXISTING_LEDGER_ID=$(api GET "/api/v1/gl/legal-entity-ledgers?legalEntityId=${LEGAL_ENTITY_ID}" \
     | jq -r '.data[] | select(.ledgerCode == "PRIM-01") | .ledgerId' | head -n1)
 
@@ -100,7 +102,7 @@ else
     LEDGER_ID=$(jq -r '.data.id' <<<"$LEDGER_RESPONSE")
     echo "  Ledger created: ${LEDGER_ID}"
 
-    echo "==> [1/10] Linking ledger to Legal Entity"
+    echo "==> [1/11] Linking ledger to Legal Entity"
     api POST /api/v1/gl/legal-entity-ledgers "$(jq -n \
         --arg legalEntityId "$LEGAL_ENTITY_ID" \
         --arg ledgerId "$LEDGER_ID" \
@@ -108,7 +110,7 @@ else
     echo "  Linked."
 fi
 
-echo "==> [2/10] Checking for existing NATURAL_ACCOUNT Finance Dimension"
+echo "==> [2/11] Checking for existing NATURAL_ACCOUNT Finance Dimension"
 EXISTING_DIMENSION=$(api GET "/api/v1/gl/finance-dimensions?ledgerId=${LEDGER_ID}&dimensionType=NATURAL_ACCOUNT" \
     | jq -r '.data | length')
 
@@ -129,7 +131,7 @@ else
     echo "  Finance dimension created."
 fi
 
-echo "==> [3/10] Checking for existing accounting calendar"
+echo "==> [3/11] Checking for existing accounting calendar"
 EXISTING_CALENDAR_ID=$(api GET "/api/v1/gl/accounting-calendars?ledgerId=${LEDGER_ID}" | jq -r '.data.id // empty')
 
 if [[ -n "$EXISTING_CALENDAR_ID" ]]; then
@@ -152,7 +154,7 @@ else
     echo "  Calendar created: ${CALENDAR_ID} (${GENERATED_COUNT} periods generated for FY 2025-26)"
 fi
 
-echo "==> [4/10] Checking for existing APR-2025 period status"
+echo "==> [4/11] Checking for existing APR-2025 period status"
 APR_2025_ID=$(api GET "/api/v1/gl/accounting-periods/find?calendarId=${CALENDAR_ID}&date=2025-04-15" | jq -r '.data.id')
 echo "  APR-2025 period id: ${APR_2025_ID}"
 
@@ -182,13 +184,13 @@ else
     PERIOD_STATUS_STATE="OPEN"
 fi
 
-echo "==> [5/10] Fetching MANUAL journal source and ACCRUAL journal category ids"
+echo "==> [5/11] Fetching MANUAL journal source and ACCRUAL journal category ids"
 MANUAL_SOURCE_ID=$(api GET /api/v1/gl/journal-sources | jq -r '.data[] | select(.code=="MANUAL") | .id')
 ACCRUAL_CATEGORY_ID=$(api GET /api/v1/gl/journal-categories | jq -r '.data[] | select(.code=="ACCRUAL") | .id')
 echo "  journalSourceId (MANUAL):   ${MANUAL_SOURCE_ID}"
 echo "  journalCategoryId (ACCRUAL): ${ACCRUAL_CATEGORY_ID}"
 
-echo "==> [6/10] Creating Chart of Accounts (25 accounts)"
+echo "==> [6/11] Creating Chart of Accounts (25 accounts)"
 
 # code|name|qualifier
 ACCOUNTS=(
@@ -251,7 +253,7 @@ for entry in "${ACCOUNTS[@]}"; do
     echo "  ${code} ${name} (${qualifier}) -> ${acct_id}"
 done
 
-echo "==> [7/10] Creating Cost Centre (required) and Product (optional) Finance Dimensions"
+echo "==> [7/11] Creating Cost Centre (required) and Product (optional) Finance Dimensions"
 
 EXISTING_CC_DIM=$(api GET "/api/v1/gl/finance-dimensions?ledgerId=${LEDGER_ID}&dimensionType=COST_CENTRE" | jq -r '.data[0].id // empty')
 if [[ -n "$EXISTING_CC_DIM" ]]; then
@@ -338,7 +340,7 @@ for entry in "${PRODUCTS[@]}"; do
     echo "  Product ${code} ${name} -> ${value_id}"
 done
 
-echo "==> [8/10] Posting journal entries"
+echo "==> [8/11] Posting journal entries"
 
 JOURNALS_RESPONSE=$(api GET "/api/v1/gl/journals?legalEntityId=${LEGAL_ENTITY_ID}&status=POSTED&size=50")
 POSTED_COUNT=$(jq -r '(.data.content // .data // []) | length' <<<"$JOURNALS_RESPONSE" 2>/dev/null || echo "0")
@@ -428,7 +430,12 @@ else
     # so P&L reports show meaningful data during the demo period.
 fi
 
-echo "==> [9/10] Closing APR-2025 period"
+echo "==> [9/11] Confirming Dynamic Insert is enabled on the ledger"
+api PATCH "/api/v1/gl/ledgers/${LEDGER_ID}/dynamic-insert" \
+    "$(jq -n '{allowDynamicInsert: true}')" >/dev/null
+echo "  Dynamic Insert: ENABLED (unknown combinations auto-registered on posting)"
+
+echo "==> [10/11] Closing APR-2025 period"
 if [[ "$PERIOD_STATUS_STATE" == "CLOSED" ]]; then
     echo "  APR-2025 already CLOSED — skipping close step."
 else
@@ -440,7 +447,7 @@ else
 fi
 
 echo ""
-echo "==> [10/10] Done. Summary:"
+echo "==> [11/11] Done. Summary:"
 echo "  legalEntityId: ${LEGAL_ENTITY_ID}"
 echo "  ledgerId:      ${LEDGER_ID}"
 echo "  calendarId:    ${CALENDAR_ID}"

@@ -991,3 +991,70 @@ private Map<String, String> accountCombination;
 - Native query bug: repeated named params in SELECT + GROUP BY bind to separate
   JDBC placeholders — extract segment value in derived subquery instead
 - Test count: 392 unit tests + full IT suite passing
+
+## Account Combination Registry (August 2026)
+- **Capability-number collision (CRITICAL)** — the build prompt for this called
+  it "GL-27". GL-27 is already GST Export (`V16__gl27_gst_export.sql`) and
+  GL-28 is TDS Recording (`V17__gl28_tds_recording.sql`). This capability has
+  no GL-NN code — refer to it as "Account Combination Registry" only. Do not
+  assign it GL-27, GL-28, or any number already listed under "Build sequence"
+  above without checking `git log`/migration filenames first.
+- **Migration number** — the build prompt said "V28"; the actual next free
+  migration was V27 (latest at the time was V26). Always check
+  `ls src/main/resources/db/migration | sort -V | tail -1` before naming a
+  new migration — do not trust a number handed to you in a prompt.
+- **PK default** — the build prompt's SQL used `gen_random_uuid()` for
+  `gl.account_combination.id`. Every other table in this schema uses
+  `uuid_generate_v4()` per Rule 4 — used that instead. `gen_random_uuid()`
+  works (pgcrypto is enabled) but would be the only table in the schema not
+  following the convention.
+- `gl.account_combination` (new table): `ledger_id`/`legal_entity_id` are
+  `@ManyToOne` entity relations on the `AccountCombination` entity (not raw
+  UUID fields), matching the `AccountBalance`/`JournalHeader` convention.
+  Extends `AuditableEntity` (gives id/isActive/createdAt/updatedAt/createdBy/
+  updatedBy) — do not redeclare any of those fields.
+- **Exact JSONB match** — `AccountCombinationRepository
+  .findByLedgerIdAndLegalEntityIdAndCombination(...)` is a native query using
+  `combination = CAST(:combination AS jsonb)` with the Map serialized to a
+  JSON string by the service before binding, same reasoning as the
+  `AccountBalanceRepository` comment: JPQL equality against a jsonb-mapped
+  Map attribute is brittle, so do it as a native query instead. Segment
+  filtering (`searchByFilter`) reuses the GL-26 `@>` containment pattern, plus
+  a `CAST(:isActive AS boolean) IS NULL OR ...` guard for the optional
+  `isActive` query param — verified via `PostingEngineIT`, not just mocks.
+- **`Ledger.allowDynamicInsert`** — new `boolean` field, default `true`
+  (matches the V27 migration's column default). Needed adding
+  `import lombok.Builder;` to `Ledger.java` for `@Builder.Default` — it
+  wasn't imported before since `Ledger` had no defaulted builder fields.
+- **PostingEngine Rule 10** — added right after Rule 9 (`validateDimensionValues`)
+  in both `postThick` and `postThin`. Skips validation entirely when a line's
+  `accountCombination` is null/empty (natural-account-only postings have
+  nothing to register). Reads `ledger.isAllowDynamicInsert()` once per
+  posting call, consistent with the "read finance_mode once" pattern.
+  `PostingEngine`'s constructor gained a new `AccountCombinationService`
+  parameter — `PostingEngineTest` builds `PostingEngine` via an explicit
+  positional constructor call (not `@InjectMocks`), so its constructor call
+  and `@Mock` list both needed updating in lockstep with the field order.
+- **`PATCH /api/v1/gl/ledgers/{id}/dynamic-insert`** — deliberately deviated
+  from the build prompt's request body shape (`{allowDynamicInsert,
+  updatedBy}`). Every other `LedgerController` mutation endpoint takes
+  `performedBy` from the `X-User-Id` header, not the request body — followed
+  that existing convention instead: body is just `{allowDynamicInsert}`.
+- **Permissions** — no new permission migration needed. `gl:accounts:view/
+  create/edit` (used by `ChartOfAccountsController`) and `gl:ledger:manage`
+  (used by `LedgerController`) already existed from V23 and were reused
+  as-is for `AccountCombinationController` and the dynamic-insert endpoint.
+- Package: `com.evyoog.gl.combination` (api/service/repository/domain/dto/
+  mapper), following the same shape as every other capability package.
+- Verified via `PostingEngineIT` (extended with 4 new tests covering
+  auto-register-then-reuse, dynamic-insert-off rejection, pre-approved
+  combination posting, and deactivated-combination rejection) rather than a
+  separate `AccountCombinationControllerIT` — reused the existing fixture
+  builder instead of standing up another Testcontainers Postgres instance.
+- Test count: 352 unit tests + 181 integration tests (533 total), full
+  `mvn verify` green. An earlier full-suite attempt in this same session hit
+  transient Testcontainers container-startup timeouts on `AuthControllerIT`
+  and `TdsControllerIT` under Docker load from many back-to-back Postgres
+  containers; a clean re-run once load settled passed both (21/21 and 3/3)
+  with no code changes in between — confirms that was sandbox flakiness, not
+  a regression from this capability.

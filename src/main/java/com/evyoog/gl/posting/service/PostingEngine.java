@@ -2,6 +2,7 @@ package com.evyoog.gl.posting.service;
 
 import com.evyoog.gl.aie.domain.SlaEventLog;
 import com.evyoog.gl.aie.repository.SlaEventLogRepository;
+import com.evyoog.gl.combination.service.AccountCombinationService;
 import com.evyoog.gl.common.audit.domain.AuditAction;
 import com.evyoog.gl.common.audit.service.AuditService;
 import com.evyoog.gl.common.exception.EvyoogException;
@@ -69,6 +70,7 @@ public class PostingEngine {
     private final FinanceDimensionRepository financeDimensionRepository;
     private final SlaEventLogRepository slaEventLogRepository;
     private final PeriodStatusService periodStatusService;
+    private final AccountCombinationService accountCombinationService;
     private final AuditService auditService;
 
     @Transactional
@@ -93,6 +95,7 @@ public class PostingEngine {
         validateAccountsExist(request.getLines(), ledger.getId());
         validateAccountsPostable(request.getLines());
         validateDimensionValues(request.getLines(), ledger.getId());
+        validateAccountCombinations(request.getLines(), ledger, request.getLegalEntityId(), request.getPerformedBy());
         validateLegalEntityAuthorised(request.getLegalEntityId(), ledger.getId());
         validateCurrency(request, ledger);
         JournalSource source = resolveJournalSource(request.getJournalSourceId());
@@ -107,6 +110,7 @@ public class PostingEngine {
         validateAccountsExist(request.getLines(), ledger.getId());
         validateAccountsPostable(request.getLines());
         validateDimensionValues(request.getLines(), ledger.getId());
+        validateAccountCombinations(request.getLines(), ledger, request.getLegalEntityId(), request.getPerformedBy());
         validateLegalEntityAuthorised(request.getLegalEntityId(), ledger.getId());
         // THIN skips rule 7 (currency) and rule 8 (approval).
         JournalSource source = resolveJournalSource(request.getJournalSourceId());
@@ -303,6 +307,22 @@ public class PostingEngine {
                                     ") is missing from account combination.", HttpStatus.BAD_REQUEST);
                 }
             }
+        }
+    }
+
+    // ── Rule 10 — the account combination must be registered (or, when the ──
+    // ── Ledger allows Dynamic Insert, is auto-registered on first use). ─────
+    // ── Lines with no account combination (natural-account-only postings) ───
+    // ── are exempt — there is nothing to register. ───────────────────────────
+    private void validateAccountCombinations(List<PostingLineRequest> lines, Ledger ledger, UUID legalEntityId,
+                                              String performedBy) {
+        boolean allowDynamicInsert = ledger.isAllowDynamicInsert();
+        for (PostingLineRequest line : lines) {
+            Map<String, String> combination = line.getAccountCombination();
+            if (combination == null || combination.isEmpty()) {
+                continue;
+            }
+            accountCombinationService.validate(ledger.getId(), legalEntityId, combination, allowDynamicInsert, performedBy);
         }
     }
 

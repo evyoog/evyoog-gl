@@ -3,6 +3,7 @@ package com.evyoog.gl.ledger.api;
 import com.evyoog.gl.common.response.ApiResponse;
 import com.evyoog.gl.ledger.dto.CreateLedgerRequest;
 import com.evyoog.gl.ledger.dto.LedgerResponse;
+import com.evyoog.gl.ledger.dto.UpdateDynamicInsertRequest;
 import com.evyoog.gl.ledger.dto.UpdateFinanceModeRequest;
 import com.evyoog.gl.ledger.dto.UpdateLedgerRequest;
 import com.evyoog.gl.ledger.service.LedgerService;
@@ -78,6 +79,16 @@ public class LedgerController {
             @Valid @RequestBody UpdateFinanceModeRequest request,
             @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId) {
         return ApiResponse.ok(service.upgradeFinanceMode(id, request, userId));
+    }
+
+    @PatchMapping("/{id}/dynamic-insert")
+    @PreAuthorize("hasAuthority('gl:ledger:manage')")
+    @Operation(summary = "Toggle whether unknown account combinations are auto-registered on posting")
+    public ApiResponse<LedgerResponse> updateDynamicInsert(
+            @PathVariable UUID id,
+            @Valid @RequestBody UpdateDynamicInsertRequest request,
+            @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId) {
+        return ApiResponse.ok(service.updateDynamicInsert(id, request, userId));
     }
 
     @DeleteMapping("/{id}")
