@@ -1058,3 +1058,16 @@ private Map<String, String> accountCombination;
   containers; a clean re-run once load settled passed both (21/21 and 3/3)
   with no code changes in between — confirms that was sandbox flakiness, not
   a regression from this capability.
+
+## GL-27 Account Combination Registry (V28 — August 2026)
+- V28 migration: gl.account_combination table + allow_dynamic_insert on gl.ledger
+- allow_dynamic_insert=TRUE (default) → auto-register unknown combinations on posting
+- allow_dynamic_insert=FALSE → strict mode, reject unknown combinations
+- combination key = DimensionType enum name (COST_CENTRE, NATURAL_ACCOUNT, PRODUCT)
+- combination_code = "5100.CC-MFG" or "4100.CC-SAL.GATE-VLV"
+- is_dynamic=TRUE = auto-registered, FALSE = manually pre-approved
+- V28 seeds all 15 existing combinations from journal_line data
+- New endpoints: GET/POST/PUT /api/v1/gl/account-combinations
+- PATCH /api/v1/gl/ledgers/{id}/dynamic-insert
+- PostingEngine Rule 10: validates combination against registry
+- Test count: 533 (352 unit + 181 integration)
