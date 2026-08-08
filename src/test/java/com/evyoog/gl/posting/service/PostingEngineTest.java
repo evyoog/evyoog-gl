@@ -530,4 +530,114 @@ class PostingEngineTest {
         verify(accountCombinationService, times(2))
                 .validate(eq(ledgerId), eq(legalEntityId), any(), eq(false), anyString());
     }
+
+    // ── Rule 4b — auto-insert default values for optional dimensions ───────
+
+    private FinanceDimension optionalProductDimension() {
+        return FinanceDimension.builder().id(UUID.randomUUID())
+                .dimensionType(DimensionType.PRODUCT).code("PRODUCT").name("Product").isRequired(false).build();
+    }
+
+    @Test
+    void testEnrichWithDefaults_addsDefaultForOptionalDimension() {
+        FinanceDimension productDim = optionalProductDimension();
+        DimensionValue defaultProduct = DimensionValue.builder().id(UUID.randomUUID()).code("SPARES").build();
+        when(financeDimensionRepository.findByLedgerIdAndIsActiveTrue(ledgerId)).thenReturn(List.of(productDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndIsDefaultTrue(productDim.getId()))
+                .thenReturn(Optional.of(defaultProduct));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.PRODUCT))
+                .thenReturn(Optional.of(productDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(productDim.getId(), "SPARES"))
+                .thenReturn(Optional.of(defaultProduct));
+
+        ArgumentCaptor<JournalHeader> captor = ArgumentCaptor.forClass(JournalHeader.class);
+        postingEngine.post(requestWithCombination(Map.of()));
+
+        verify(journalHeaderRepository).save(captor.capture());
+        assertThat(captor.getValue().getLines().get(0).getAccountCombination())
+                .containsEntry("PRODUCT", "SPARES");
+    }
+
+    @Test
+    void testEnrichWithDefaults_doesNotOverrideExplicitValue() {
+        FinanceDimension productDim = optionalProductDimension();
+        DimensionValue defaultProduct = DimensionValue.builder().id(UUID.randomUUID()).code("SPARES").build();
+        when(financeDimensionRepository.findByLedgerIdAndIsActiveTrue(ledgerId)).thenReturn(List.of(productDim));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.PRODUCT))
+                .thenReturn(Optional.of(productDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(productDim.getId(), "GATE-VLV"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("GATE-VLV").build()));
+
+        ArgumentCaptor<JournalHeader> captor = ArgumentCaptor.forClass(JournalHeader.class);
+        postingEngine.post(requestWithCombination(Map.of("PRODUCT", "GATE-VLV")));
+
+        verify(journalHeaderRepository).save(captor.capture());
+        assertThat(captor.getValue().getLines().get(0).getAccountCombination())
+                .containsEntry("PRODUCT", "GATE-VLV");
+        verify(dimensionValueRepository, org.mockito.Mockito.never())
+                .findByFinanceDimensionIdAndIsDefaultTrue(productDim.getId());
+    }
+
+    @Test
+    void testEnrichWithDefaults_skipsRequiredDimensions() {
+        FinanceDimension costCentreDim = requiredCostCentreDimension();
+        when(financeDimensionRepository.findByLedgerIdAndIsActiveTrue(ledgerId)).thenReturn(List.of(costCentreDim));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.COST_CENTRE))
+                .thenReturn(Optional.of(costCentreDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-MFG"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(CC_MFG_ID).code("CC-MFG").build()));
+
+        postingEngine.post(requestWithCombination(Map.of("COST_CENTRE", "CC-MFG")));
+
+        verify(dimensionValueRepository, org.mockito.Mockito.never())
+                .findByFinanceDimensionIdAndIsDefaultTrue(COST_CTR_DIM_ID);
+    }
+
+    @Test
+    void testEnrichWithDefaults_skipsNaturalAccount() {
+        postingEngine.post(balancedThickRequest());
+
+        verify(dimensionValueRepository, org.mockito.Mockito.never())
+                .findByFinanceDimensionIdAndIsDefaultTrue(naturalAcctDimId);
+    }
+
+    @Test
+    void testEnrichWithDefaults_noDefaultDefined_omitsFromCombination() {
+        FinanceDimension productDim = optionalProductDimension();
+        when(financeDimensionRepository.findByLedgerIdAndIsActiveTrue(ledgerId)).thenReturn(List.of(productDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndIsDefaultTrue(productDim.getId()))
+                .thenReturn(Optional.empty());
+
+        ArgumentCaptor<JournalHeader> captor = ArgumentCaptor.forClass(JournalHeader.class);
+        PostingResult result = postingEngine.post(requestWithCombination(Map.of()));
+
+        assertThat(result.isSuccess()).isTrue();
+        verify(journalHeaderRepository).save(captor.capture());
+        assertThat(captor.getValue().getLines().get(0).getAccountCombination()).doesNotContainKey("PRODUCT");
+    }
+
+    @Test
+    void testPostingEngine_enrichesOptionalDimensionWithDefault() {
+        FinanceDimension productDim = optionalProductDimension();
+        DimensionValue defaultProduct = DimensionValue.builder().id(UUID.randomUUID()).code("SPARES").build();
+        when(financeDimensionRepository.findByLedgerIdAndIsActiveTrue(ledgerId)).thenReturn(List.of(productDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndIsDefaultTrue(productDim.getId()))
+                .thenReturn(Optional.of(defaultProduct));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.PRODUCT))
+                .thenReturn(Optional.of(productDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(productDim.getId(), "SPARES"))
+                .thenReturn(Optional.of(defaultProduct));
+
+        postingEngine.post(requestWithCombination(Map.of()));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> combinationCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(accountCombinationService, times(2))
+                .validate(eq(ledgerId), eq(legalEntityId), combinationCaptor.capture(), eq(true), anyString());
+        assertThat(combinationCaptor.getValue()).containsEntry("PRODUCT", "SPARES");
+    }
 }

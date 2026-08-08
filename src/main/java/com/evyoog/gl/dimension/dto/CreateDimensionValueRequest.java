@@ -45,6 +45,8 @@ public record CreateDimensionValueRequest(
 
         Integer displayOrder,
 
+        Boolean isDefault,
+
         // Intercompany — required when the owning Finance Dimension is INTERCOMPANY
         UUID counterpartyLegalEntityId,
 

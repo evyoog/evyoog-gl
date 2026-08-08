@@ -111,7 +111,7 @@ public class ChartOfAccountsService {
                 dimension.getId(), request.code(), request.name(), request.description(),
                 request.parentAccountId(), request.qualifier(), isSummary, isPostable,
                 request.normalBalance(), request.gstApplicable(), request.tdsApplicable(),
-                request.tdsSection(), request.displayOrder(),
+                request.tdsSection(), request.displayOrder(), null,
                 request.counterpartyLegalEntityId(), request.ccManagerName(), request.ccManagerEmail(),
                 request.ccDepartment(), request.validFrom(), request.validTo(), request.budgetControlled(),
                 request.extendedAttributes());
@@ -129,7 +129,7 @@ public class ChartOfAccountsService {
 
         UpdateDimensionValueRequest dvRequest = new UpdateDimensionValueRequest(
                 request.name(), request.description(), request.isSummary(), isPostable,
-                request.gstApplicable(), request.tdsApplicable(), request.tdsSection(), request.displayOrder(),
+                request.gstApplicable(), request.tdsApplicable(), request.tdsSection(), request.displayOrder(), null,
                 request.counterpartyLegalEntityId(), request.ccManagerName(), request.ccManagerEmail(),
                 request.ccDepartment(), request.validFrom(), request.validTo(), request.budgetControlled());
 
@@ -172,7 +172,7 @@ public class ChartOfAccountsService {
 
             CreateDimensionValueRequest dvRequest = new CreateDimensionValueRequest(
                     dimension.getId(), code, name, null, parentId, qualifier, isSummary, isPostable,
-                    null, gstApplicable, tdsApplicable, null, order,
+                    null, gstApplicable, tdsApplicable, null, order, null,
                     null, null, null, null, null, null, null, null);
 
             DimensionValueResponse response = dimensionValueService.create(dvRequest, performedBy);

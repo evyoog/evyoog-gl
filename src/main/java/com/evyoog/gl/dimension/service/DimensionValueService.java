@@ -87,6 +87,10 @@ public class DimensionValueService {
 
         validateDateRange(request.validFrom(), request.validTo());
 
+        if (Boolean.TRUE.equals(request.isDefault())) {
+            clearExistingDefault(financeDimension.getId());
+        }
+
         DimensionValue entity = mapper.toEntity(request);
         entity.setFinanceDimension(financeDimension);
         entity.setParentValue(parent);
@@ -95,6 +99,7 @@ public class DimensionValueService {
         entity.setGstApplicable(request.gstApplicable() != null && request.gstApplicable());
         entity.setTdsApplicable(request.tdsApplicable() != null && request.tdsApplicable());
         entity.setDisplayOrder(request.displayOrder() != null ? request.displayOrder() : 0);
+        entity.setDefault(Boolean.TRUE.equals(request.isDefault()));
         entity.setNormalBalance(request.normalBalance() != null
                 ? request.normalBalance()
                 : deriveNormalBalance(request.accountQualifier()));
@@ -129,6 +134,12 @@ public class DimensionValueService {
         if (request.budgetControlled() != null) {
             entity.setBudgetControlled(request.budgetControlled());
         }
+        if (Boolean.TRUE.equals(request.isDefault())) {
+            clearExistingDefault(entity.getFinanceDimension().getId());
+            entity.setDefault(true);
+        } else if (Boolean.FALSE.equals(request.isDefault())) {
+            entity.setDefault(false);
+        }
         if (request.counterpartyLegalEntityId() != null) {
             LegalEntity counterparty = legalEntityRepository.findById(request.counterpartyLegalEntityId())
                     .orElseThrow(() -> new ResourceNotFoundException("LegalEntity", request.counterpartyLegalEntityId()));
@@ -141,6 +152,45 @@ public class DimensionValueService {
         auditService.log(AuditAction.UPDATE, "dimension_value", saved.getId(), before, response, performedBy);
 
         return response;
+    }
+
+    @Transactional
+    public DimensionValueResponse setDefault(UUID id, String performedBy) {
+        DimensionValue entity = findOrThrow(id);
+        DimensionValueResponse before = mapper.toResponse(entity);
+
+        clearExistingDefault(entity.getFinanceDimension().getId());
+        entity.setDefault(true);
+        entity.setUpdatedBy(performedBy);
+
+        DimensionValue saved = repository.saveAndFlush(entity);
+        DimensionValueResponse response = mapper.toResponse(saved);
+        auditService.log(AuditAction.UPDATE, "dimension_value", saved.getId(), before, response, performedBy);
+
+        return response;
+    }
+
+    @Transactional
+    public DimensionValueResponse clearDefault(UUID id, String performedBy) {
+        DimensionValue entity = findOrThrow(id);
+        DimensionValueResponse before = mapper.toResponse(entity);
+
+        entity.setDefault(false);
+        entity.setUpdatedBy(performedBy);
+
+        DimensionValue saved = repository.saveAndFlush(entity);
+        DimensionValueResponse response = mapper.toResponse(saved);
+        auditService.log(AuditAction.UPDATE, "dimension_value", saved.getId(), before, response, performedBy);
+
+        return response;
+    }
+
+    private void clearExistingDefault(UUID financeDimensionId) {
+        repository.findByFinanceDimensionIdAndIsDefaultTrue(financeDimensionId)
+                .ifPresent(existing -> {
+                    existing.setDefault(false);
+                    repository.save(existing);
+                });
     }
 
     @Transactional

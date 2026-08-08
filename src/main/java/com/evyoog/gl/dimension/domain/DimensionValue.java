@@ -75,6 +75,9 @@ public class DimensionValue extends AuditableEntity {
     @Column(name = "display_order", nullable = false)
     private int displayOrder;
 
+    @Column(name = "is_default", nullable = false)
+    private boolean isDefault;
+
     // Intercompany support — mandatory when dimensionType = INTERCOMPANY
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "counterparty_legal_entity_id")

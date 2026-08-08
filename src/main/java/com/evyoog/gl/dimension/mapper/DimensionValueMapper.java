@@ -18,6 +18,7 @@ public interface DimensionValueMapper {
     @Mapping(target = "gstApplicable", ignore = true)
     @Mapping(target = "tdsApplicable", ignore = true)
     @Mapping(target = "displayOrder", ignore = true)
+    @Mapping(target = "isDefault", ignore = true)
     @Mapping(target = "normalBalance", ignore = true)
     @Mapping(target = "counterpartyLegalEntity", ignore = true)
     @Mapping(target = "budgetControlled", ignore = true)
@@ -33,12 +34,14 @@ public interface DimensionValueMapper {
     @Mapping(source = "active", target = "isActive")
     @Mapping(source = "summary", target = "isSummary")
     @Mapping(source = "postable", target = "isPostable")
+    @Mapping(source = "default", target = "isDefault")
     @Mapping(source = "counterpartyLegalEntity.id", target = "counterpartyLegalEntityId")
     @Mapping(source = "counterpartyLegalEntity.name", target = "counterpartyLegalEntityName")
     DimensionValueResponse toResponse(DimensionValue entity);
 
     @Mapping(target = "summary", ignore = true)
     @Mapping(target = "postable", ignore = true)
+    @Mapping(target = "default", ignore = true)
     @Mapping(target = "counterpartyLegalEntity", ignore = true)
     @Mapping(target = "budgetControlled", ignore = true)
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)

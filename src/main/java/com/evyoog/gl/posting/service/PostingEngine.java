@@ -44,6 +44,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.temporal.WeekFields;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -94,6 +95,7 @@ public class PostingEngine {
         periodStatusService.validatePeriodOpen(request.getLegalEntityId(), request.getAccountingPeriodId());
         validateAccountsExist(request.getLines(), ledger.getId());
         validateAccountsPostable(request.getLines());
+        enrichWithDefaults(request.getLines(), ledger.getId());
         validateDimensionValues(request.getLines(), ledger.getId());
         validateAccountCombinations(request.getLines(), ledger, request.getLegalEntityId(), request.getPerformedBy());
         validateLegalEntityAuthorised(request.getLegalEntityId(), ledger.getId());
@@ -109,6 +111,7 @@ public class PostingEngine {
         periodStatusService.validatePeriodOpen(request.getLegalEntityId(), request.getAccountingPeriodId());
         validateAccountsExist(request.getLines(), ledger.getId());
         validateAccountsPostable(request.getLines());
+        enrichWithDefaults(request.getLines(), ledger.getId());
         validateDimensionValues(request.getLines(), ledger.getId());
         validateAccountCombinations(request.getLines(), ledger, request.getLegalEntityId(), request.getPerformedBy());
         validateLegalEntityAuthorised(request.getLegalEntityId(), ledger.getId());
@@ -258,6 +261,44 @@ public class PostingEngine {
                 throw new EvyoogException("ACCOUNT_NOT_POSTABLE",
                         "Account " + account.getCode() + " is not marked as postable.",
                         HttpStatus.UNPROCESSABLE_ENTITY);
+            }
+        }
+    }
+
+    // ── Rule 4b — auto-insert default values for optional dimensions that ───
+    // ── the caller left out of the account combination, before Rule 5 ───────
+    // ── validation. NATURAL_ACCOUNT (carried via naturalAccountValueId) and ─
+    // ── required dimensions (must be explicit) are never auto-filled. ───────
+    private void enrichWithDefaults(List<PostingLineRequest> lines, UUID ledgerId) {
+        List<FinanceDimension> optionalDimensions = financeDimensionRepository
+                .findByLedgerIdAndIsActiveTrue(ledgerId).stream()
+                .filter(dimension -> !dimension.isRequired())
+                .filter(dimension -> dimension.getDimensionType() != DimensionType.NATURAL_ACCOUNT)
+                .toList();
+
+        if (optionalDimensions.isEmpty()) {
+            return;
+        }
+
+        for (PostingLineRequest line : lines) {
+            Map<String, String> combination = line.getAccountCombination() != null
+                    ? new HashMap<>(line.getAccountCombination()) : new HashMap<>();
+            boolean changed = false;
+            for (FinanceDimension dimension : optionalDimensions) {
+                String key = dimension.getDimensionType().name();
+                if (combination.containsKey(key)) {
+                    continue;
+                }
+                DimensionValue defaultValue = dimensionValueRepository
+                        .findByFinanceDimensionIdAndIsDefaultTrue(dimension.getId())
+                        .orElse(null);
+                if (defaultValue != null) {
+                    combination.put(key, defaultValue.getCode());
+                    changed = true;
+                }
+            }
+            if (changed) {
+                line.setAccountCombination(combination);
             }
         }
     }

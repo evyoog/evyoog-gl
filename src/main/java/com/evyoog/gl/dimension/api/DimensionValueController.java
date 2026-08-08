@@ -79,6 +79,24 @@ public class DimensionValueController {
         return ApiResponse.ok(service.update(id, request, userId));
     }
 
+    @PostMapping("/{id}/set-default")
+    @PreAuthorize("hasAuthority('gl:dimension:manage')")
+    @Operation(summary = "Set this value as the default for its dimension, clearing any existing default")
+    public ApiResponse<DimensionValueResponse> setDefault(
+            @PathVariable UUID id,
+            @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId) {
+        return ApiResponse.ok(service.setDefault(id, userId));
+    }
+
+    @PostMapping("/{id}/clear-default")
+    @PreAuthorize("hasAuthority('gl:dimension:manage')")
+    @Operation(summary = "Clear the default flag on this value")
+    public ApiResponse<DimensionValueResponse> clearDefault(
+            @PathVariable UUID id,
+            @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId) {
+        return ApiResponse.ok(service.clearDefault(id, userId));
+    }
+
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('gl:dimension:manage')")
     @Operation(summary = "Soft-delete a dimension value (isActive = false)")

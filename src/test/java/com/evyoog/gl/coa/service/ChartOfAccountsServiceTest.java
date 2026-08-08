@@ -259,6 +259,6 @@ class ChartOfAccountsServiceTest {
         return new DimensionValueResponse(UUID.randomUUID(), fd.getId(), fd.getCode(), fd.getName(),
                 fd.getDimensionType(), code, name, null, null, null, null, AccountQualifier.ASSET,
                 isSummary != null && isSummary, isPostable != null && isPostable, null, false, false, null, 0,
-                true, null, null, null, null, null, null, null, false, null, null, null);
+                false, true, null, null, null, null, null, null, null, false, null, null, null);
     }
 }

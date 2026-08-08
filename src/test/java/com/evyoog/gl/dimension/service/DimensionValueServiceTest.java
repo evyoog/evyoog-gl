@@ -71,15 +71,15 @@ class DimensionValueServiceTest {
                 entity.getFinanceDimension().getDimensionType(), entity.getCode(), entity.getName(),
                 entity.getDescription(), null, null, null, entity.getAccountQualifier(), entity.isSummary(),
                 entity.isPostable(), entity.getNormalBalance(), entity.isGstApplicable(), entity.isTdsApplicable(),
-                entity.getTdsSection(), entity.getDisplayOrder(), entity.isActive(), null, null, null, null, null,
-                entity.getValidFrom(), entity.getValidTo(), entity.isBudgetControlled(), entity.getExtendedAttributes(),
-                Instant.now(), Instant.now());
+                entity.getTdsSection(), entity.getDisplayOrder(), entity.isDefault(), entity.isActive(), null, null,
+                null, null, null, entity.getValidFrom(), entity.getValidTo(), entity.isBudgetControlled(),
+                entity.getExtendedAttributes(), Instant.now(), Instant.now());
     }
 
     private CreateDimensionValueRequest basicRequest(UUID financeDimensionId, String code, String name,
                                                        UUID parentValueId, AccountQualifier qualifier) {
         return new CreateDimensionValueRequest(financeDimensionId, code, name, null, parentValueId, qualifier,
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -214,8 +214,8 @@ class DimensionValueServiceTest {
         counterparty.setId(UUID.randomUUID());
 
         CreateDimensionValueRequest request = new CreateDimensionValueRequest(fd.getId(), "IC-001", "Intercompany 1",
-                null, null, null, null, null, null, null, null, null, null, counterparty.getId(), null, null, null,
-                null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, counterparty.getId(), null, null,
+                null, null, null, null, null);
 
         when(financeDimensionRepository.findById(fd.getId())).thenReturn(Optional.of(fd));
         when(repository.existsByFinanceDimensionIdAndCode(fd.getId(), "IC-001")).thenReturn(false);
@@ -231,7 +231,7 @@ class DimensionValueServiceTest {
     void createValue_invalidDateRange_shouldThrow400() {
         FinanceDimension fd = financeDimension(DimensionType.COST_CENTRE);
         CreateDimensionValueRequest request = new CreateDimensionValueRequest(fd.getId(), "CC-001", "Cost Centre 1",
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
                 LocalDate.of(2026, 6, 1), LocalDate.of(2026, 1, 1), null, null);
 
         when(financeDimensionRepository.findById(fd.getId())).thenReturn(Optional.of(fd));
@@ -265,5 +265,68 @@ class DimensionValueServiceTest {
 
         assertThatThrownBy(() -> service.getById(id))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void testSetDefault_setsDefaultAndClearsPrevious() {
+        FinanceDimension fd = financeDimension(DimensionType.PRODUCT);
+
+        DimensionValue previousDefault = DimensionValue.builder().code("SPARES").name("Spares")
+                .financeDimension(fd).build();
+        previousDefault.setId(UUID.randomUUID());
+        previousDefault.setDefault(true);
+
+        DimensionValue target = DimensionValue.builder().code("GATE-VLV").name("Gate Valve")
+                .financeDimension(fd).build();
+        target.setId(UUID.randomUUID());
+
+        when(repository.findById(target.getId())).thenReturn(Optional.of(target));
+        when(repository.findByFinanceDimensionIdAndIsDefaultTrue(fd.getId())).thenReturn(Optional.of(previousDefault));
+        when(repository.save(previousDefault)).thenReturn(previousDefault);
+        when(repository.saveAndFlush(target)).thenReturn(target);
+        when(mapper.toResponse(any(DimensionValue.class))).thenAnswer(inv -> responseFor(inv.getArgument(0)));
+
+        DimensionValueResponse result = service.setDefault(target.getId(), "prashanth");
+
+        assertThat(previousDefault.isDefault()).isFalse();
+        assertThat(target.isDefault()).isTrue();
+        assertThat(result.isDefault()).isTrue();
+        org.mockito.Mockito.verify(repository).save(previousDefault);
+    }
+
+    @Test
+    void testSetDefault_onlyOneDefaultPerDimension() {
+        FinanceDimension fd = financeDimension(DimensionType.PRODUCT);
+        DimensionValue target = DimensionValue.builder().code("GATE-VLV").name("Gate Valve")
+                .financeDimension(fd).build();
+        target.setId(UUID.randomUUID());
+
+        when(repository.findById(target.getId())).thenReturn(Optional.of(target));
+        when(repository.findByFinanceDimensionIdAndIsDefaultTrue(fd.getId())).thenReturn(Optional.empty());
+        when(repository.saveAndFlush(target)).thenReturn(target);
+        when(mapper.toResponse(any(DimensionValue.class))).thenAnswer(inv -> responseFor(inv.getArgument(0)));
+
+        service.setDefault(target.getId(), "prashanth");
+
+        assertThat(target.isDefault()).isTrue();
+        org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any(DimensionValue.class));
+    }
+
+    @Test
+    void testClearDefault_clearsDefaultFlag() {
+        FinanceDimension fd = financeDimension(DimensionType.PRODUCT);
+        DimensionValue target = DimensionValue.builder().code("GATE-VLV").name("Gate Valve")
+                .financeDimension(fd).build();
+        target.setId(UUID.randomUUID());
+        target.setDefault(true);
+
+        when(repository.findById(target.getId())).thenReturn(Optional.of(target));
+        when(repository.saveAndFlush(target)).thenReturn(target);
+        when(mapper.toResponse(any(DimensionValue.class))).thenAnswer(inv -> responseFor(inv.getArgument(0)));
+
+        DimensionValueResponse result = service.clearDefault(target.getId(), "prashanth");
+
+        assertThat(target.isDefault()).isFalse();
+        assertThat(result.isDefault()).isFalse();
     }
 }

@@ -29,6 +29,7 @@ public record DimensionValueResponse(
         boolean tdsApplicable,
         String tdsSection,
         int displayOrder,
+        boolean isDefault,
         boolean isActive,
         UUID counterpartyLegalEntityId,
         String counterpartyLegalEntityName,

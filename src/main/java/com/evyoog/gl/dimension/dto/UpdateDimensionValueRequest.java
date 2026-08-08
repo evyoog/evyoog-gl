@@ -26,6 +26,8 @@ public record UpdateDimensionValueRequest(
 
         Integer displayOrder,
 
+        Boolean isDefault,
+
         UUID counterpartyLegalEntityId,
 
         String ccManagerName,

@@ -30,6 +30,10 @@ public interface DimensionValueRepository extends JpaRepository<DimensionValue, 
 
     long countByParentValueIdAndIsActiveTrue(UUID parentValueId);
 
+    Optional<DimensionValue> findByFinanceDimensionIdAndIsDefaultTrue(UUID financeDimensionId);
+
+    List<DimensionValue> findByFinanceDimensionIdAndIsActiveTrueOrderByDisplayOrderAsc(UUID financeDimensionId);
+
     @Query("""
             select dv from DimensionValue dv
             where dv.financeDimension.ledger.id = :ledgerId
