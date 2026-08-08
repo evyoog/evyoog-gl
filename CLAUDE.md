@@ -1071,3 +1071,12 @@ private Map<String, String> accountCombination;
 - PATCH /api/v1/gl/ledgers/{id}/dynamic-insert
 - PostingEngine Rule 10: validates combination against registry
 - Test count: 533 (352 unit + 181 integration)
+
+## GL-29 Default Dimension Value (V29 — August 2026)
+- V29 migration: is_default BOOLEAN DEFAULT FALSE on gl.dimension_value
+- Unique partial index: only one default per finance_dimension (WHERE is_default=TRUE)
+- PostingEngine enriches optional dimensions with default value before Rule 9
+- NATURAL_ACCOUNT and required dimensions excluded from auto-enrichment
+- New endpoints: POST /dimension-values/{id}/set-default + /clear-default
+- Permission: gl:dimension:manage
+- Test count: 361 unit tests (skipped ITs due to Codespace resource constraints)
