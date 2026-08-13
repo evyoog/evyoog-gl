@@ -132,14 +132,19 @@ public class FinanceDimensionService {
     }
 
     @Transactional(readOnly = true)
-    public List<FinanceDimensionResponse> list(UUID ledgerId, DimensionType dimensionType) {
+    public List<FinanceDimensionResponse> list(UUID ledgerId, UUID coaStructureId, DimensionType dimensionType) {
         List<FinanceDimension> entities;
-        if (ledgerId == null) {
+        if (coaStructureId != null) {
+            entities = repository.findByCoaStructureId(coaStructureId);
+        } else if (ledgerId == null) {
             entities = repository.findAll();
         } else if (dimensionType != null) {
             entities = repository.findByLedgerIdAndDimensionType(ledgerId, dimensionType);
         } else {
             entities = repository.findByLedgerId(ledgerId);
+        }
+        if (coaStructureId != null && dimensionType != null) {
+            entities = entities.stream().filter(fd -> fd.getDimensionType() == dimensionType).toList();
         }
         return entities.stream()
                 .map(entity -> mapper.toResponse(entity, valueCountFor(entity.getId())))

@@ -16,6 +16,7 @@ public interface LedgerMapper {
     Ledger toEntity(CreateLedgerRequest request);
 
     @Mapping(source = "active", target = "isActive")
+    @Mapping(source = "coaStructure.id", target = "coaStructureId")
     LedgerResponse toResponse(Ledger entity);
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)

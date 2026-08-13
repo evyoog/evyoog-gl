@@ -17,6 +17,7 @@ public record LedgerResponse(
         String functionalCurrency,
         AccountingStandard accountingStandard,
         boolean allowDynamicInsert,
+        UUID coaStructureId,
         boolean isActive,
         Instant createdAt,
         Instant updatedAt

@@ -54,11 +54,12 @@ public class FinanceDimensionController {
 
     @GetMapping
     @PreAuthorize("hasAuthority('gl:dimension:view')")
-    @Operation(summary = "List finance dimensions, optionally filtered by ledger and dimension type")
+    @Operation(summary = "List finance dimensions, optionally filtered by ledger, COA Structure, and dimension type")
     public ApiResponse<List<FinanceDimensionResponse>> list(
             @RequestParam(required = false) UUID ledgerId,
+            @RequestParam(required = false) UUID coaStructureId,
             @RequestParam(required = false) DimensionType dimensionType) {
-        return ApiResponse.ok(service.list(ledgerId, dimensionType));
+        return ApiResponse.ok(service.list(ledgerId, coaStructureId, dimensionType));
     }
 
     @PatchMapping("/{id}")

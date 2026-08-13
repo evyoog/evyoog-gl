@@ -9,6 +9,7 @@ public record FinanceDimensionResponse(
         UUID id,
         UUID ledgerId,
         String ledgerName,
+        UUID coaStructureId,
         String code,
         String name,
         String description,

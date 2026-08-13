@@ -1,5 +1,6 @@
 package com.evyoog.gl.dimension.domain;
 
+import com.evyoog.gl.coa.domain.CoaStructure;
 import com.evyoog.gl.common.domain.AuditableEntity;
 import com.evyoog.gl.ledger.domain.Ledger;
 import jakarta.persistence.Column;
@@ -28,8 +29,12 @@ import lombok.experimental.SuperBuilder;
 public class FinanceDimension extends AuditableEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "ledger_id", nullable = false)
+    @JoinColumn(name = "ledger_id")
     private Ledger ledger;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "coa_structure_id")
+    private CoaStructure coaStructure;
 
     @Column(name = "code", nullable = false, length = 30)
     private String code;

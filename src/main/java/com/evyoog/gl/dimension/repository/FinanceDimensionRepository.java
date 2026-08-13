@@ -23,4 +23,10 @@ public interface FinanceDimensionRepository extends JpaRepository<FinanceDimensi
     List<FinanceDimension> findByLedgerIdAndDimensionType(UUID ledgerId, DimensionType dimensionType);
 
     Optional<FinanceDimension> findByLedgerIdAndDimensionTypeAndIsActiveTrue(UUID ledgerId, DimensionType dimensionType);
+
+    List<FinanceDimension> findByCoaStructureIdAndIsActiveTrueOrderByDisplayOrderAsc(UUID coaStructureId);
+
+    List<FinanceDimension> findByCoaStructureId(UUID coaStructureId);
+
+    boolean existsByCoaStructureIdAndCode(UUID coaStructureId, String code);
 }

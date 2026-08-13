@@ -19,6 +19,7 @@ public interface FinanceDimensionMapper {
 
     @Mapping(source = "entity.ledger.id", target = "ledgerId")
     @Mapping(source = "entity.ledger.name", target = "ledgerName")
+    @Mapping(source = "entity.coaStructure.id", target = "coaStructureId")
     @Mapping(source = "entity.active", target = "isActive")
     @Mapping(source = "entity.required", target = "isRequired")
     @Mapping(source = "valueCount", target = "valueCount")

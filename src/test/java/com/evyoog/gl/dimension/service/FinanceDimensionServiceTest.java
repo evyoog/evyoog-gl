@@ -57,7 +57,7 @@ class FinanceDimensionServiceTest {
 
     private FinanceDimensionResponse responseFor(FinanceDimension entity, long valueCount) {
         return new FinanceDimensionResponse(entity.getId(), entity.getLedger().getId(), entity.getLedger().getName(),
-                entity.getCode(), entity.getName(), entity.getDescription(), entity.getDimensionType(),
+                null, entity.getCode(), entity.getName(), entity.getDescription(), entity.getDimensionType(),
                 entity.isRequired(), entity.getDisplayOrder(), entity.isActive(), valueCount,
                 Instant.now(), Instant.now());
     }

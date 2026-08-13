@@ -1,11 +1,15 @@
 package com.evyoog.gl.ledger.domain;
 
+import com.evyoog.gl.coa.domain.CoaStructure;
 import com.evyoog.gl.common.domain.AuditableEntity;
 import com.evyoog.gl.enterprise.domain.AccountingStandard;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -52,4 +56,8 @@ public class Ledger extends AuditableEntity {
     @Builder.Default
     @Column(name = "allow_dynamic_insert", nullable = false)
     private boolean allowDynamicInsert = true;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "coa_structure_id")
+    private CoaStructure coaStructure;
 }

@@ -12,6 +12,10 @@ public interface LedgerRepository extends JpaRepository<Ledger, UUID> {
 
     boolean existsByCode(String code);
 
+    long countByCoaStructureIdAndIsActiveTrue(UUID coaStructureId);
+
+    List<Ledger> findByCoaStructureIdAndIsActiveTrue(UUID coaStructureId);
+
     @Query("""
             select distinct lel.ledger from LegalEntityLedger lel
             where lel.legalEntity.businessGroup.id = :businessGroupId

@@ -1080,3 +1080,81 @@ private Map<String, String> accountCombination;
 - New endpoints: POST /dimension-values/{id}/set-default + /clear-default
 - Permission: gl:dimension:manage
 - Test count: 361 unit tests (skipped ITs due to Codespace resource constraints)
+
+## GL-30 COA Structure (V29 — August 2026)
+- **Migration-number collision (again)** — the build prompt assumed the next
+  free migration was V30. The actual latest at build time was V28
+  (`default_dimension_value`), so this is **V29**, not V30. Same lesson as
+  the Account Combination Registry session: always run
+  `ls src/main/resources/db/migration | sort -V | tail -1` before trusting a
+  migration number handed to you in a prompt.
+- `gl.coa_structure` (new table): `business_group_id` is a `@ManyToOne
+  BusinessGroup` entity relation on the `CoaStructure` entity (not a raw
+  UUID), matching the rest of the schema's convention. PK uses
+  `uuid_generate_v4()` per Rule 4 (the prompt's SQL used `gen_random_uuid()`
+  — corrected, same as the Account Combination Registry session).
+- `gl.finance_dimension.coa_structure_id` (new, nullable FK) and
+  `gl.finance_dimension.ledger_id` (now nullable) both became `@ManyToOne`
+  entity relations (`coaStructure`, `ledger`) — not raw UUID fields.
+  `gl.ledger.coa_structure_id` likewise became a `@ManyToOne CoaStructure`
+  relation on `Ledger`.
+- **Data migration derives `business_group_id` via the real ledger chain**,
+  not an arbitrary `business_group LIMIT 1` as the build prompt's SQL did —
+  joins `legal_entity_ledger` → `legal_entity` → `business_group` for the
+  hardcoded Orbinox ledger ID `b97398f5-146d-40fe-9dc0-2601095bde1a`. Live-
+  verified against the running dev DB: creates `STD-IND-MFG` COA Structure,
+  links all 3 existing Finance Dimensions (NAT-ACCT/COST-CTR/PRODUCT) and the
+  Ledger to it. On a fresh Testcontainers DB (no matching ledger row) every
+  statement in the migration affects zero rows — confirmed via `mvn verify`
+  context-load and the `EvyoogGlApplicationTests` run against the live DB.
+- **Known Phase-1 limitation (inherent to the locked design, not a bug)**:
+  `finance_dimension.ledger_id` is a single scalar kept only for backward
+  compatibility with existing ledger-scoped queries (e.g. `PostingEngine`'s
+  `findByLedgerIdAndDimensionTypeAndIsActiveTrue`). Since a COA Structure can
+  be shared across multiple Ledgers (design decision #4) but each
+  `finance_dimension` row can point at only one Ledger, calling
+  `assignToLedger()` for a *second* Ledger silently repoints every segment's
+  `ledger_id` to the new Ledger, breaking the first Ledger's ledger-scoped
+  lookups. Only `coaStructureId`-based lookups (the new preferred path) are
+  correct once a structure is shared across more than one Ledger. This is a
+  structural consequence of the prompt's own "locked" design, not something
+  fixed here — flagging it for whoever builds true multi-ledger sharing.
+- `is_postable` / summary-account rejection (`ACCOUNT_NOT_POSTABLE` /
+  `SUMMARY_ACCOUNT_NOT_POSTABLE`) was **already fully implemented and
+  tested** in `PostingEngine.validateAccountsPostable()` from an earlier
+  session — the build prompt's step 6 and its two requested tests
+  (`testPostingEngine_summaryAccount_throwsAccountNotPostable`,
+  `testPostingEngine_postableAccount_passes`) were redundant with existing
+  code/tests (`testPostThick_summaryAccount_throwsSUMMARY_ACCOUNT_NOT_POSTABLE`
+  plus the many passing-postable-account tests already in
+  `PostingEngineTest`). Nothing added there.
+- `PATCH /api/v1/gl/ledgers/{id}/dynamic-insert` (listed as a to-build item
+  in the prompt) already existed from the Account Combination Registry
+  session — not rebuilt.
+- `GET /api/v1/gl/finance-dimensions` now also accepts `?coaStructureId=`
+  alongside the existing `?ledgerId=` filter (both optional, `coaStructureId`
+  takes precedence when both/either supplied with `dimensionType`).
+  `FinanceDimensionResponse` gained `coaStructureId`; `LedgerResponse` gained
+  `coaStructureId` — both purely additive (new record component appended
+  after existing fields would break positional test constructors, so each
+  was inserted where its corresponding entity field naturally sits and the
+  two affected test helper methods were updated in lockstep).
+- New package `com.evyoog.gl.coa` (alongside existing GL-05 Chart of
+  Accounts classes in the same package): `CoaStructure`/
+  `CoaStructureRepository`/`CoaStructureService`/`CoaStructureController`/
+  DTOs/`CoaStructureMapper`. Endpoints reuse `gl:ledger:view`/
+  `gl:ledger:manage` (already existed from V23 AUTH-01) — no new permission
+  migration needed.
+- `assignToLedger()` returns the full `CoaStructureResponse` (not `void` as
+  the prompt's service pseudocode had it) — matches every other mutation
+  endpoint in this codebase returning its updated resource.
+- Live-tested end to end against the running dev server: `GET
+  /coa-structures/by-ledger/{ledgerId}` returns the migrated STD-IND-MFG
+  structure with correct segment value counts (25/4/5), `GET
+  /coa-structures/{id}/combination-format` returns
+  `[NAT-ACCT].[COST-CTR].[PRODUCT]`, duplicate-segment-code and
+  duplicate-structure-code both correctly reject, and the pre-existing
+  `?ledgerId=` finance-dimensions filter still works unchanged.
+- Test count: 371 unit tests (361 prior + 10 new `CoaStructureServiceTest`),
+  `mvn test -DskipITs` green. ITs skipped per Codespace resource constraints,
+  consistent with GL-29.

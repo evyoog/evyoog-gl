@@ -43,7 +43,7 @@ class LedgerServiceTest {
     private LedgerResponse responseFor(Ledger ledger) {
         return new LedgerResponse(ledger.getId(), ledger.getCode(), ledger.getName(), ledger.getDescription(),
                 ledger.getFinanceMode(), ledger.getLedgerCategory(), ledger.getFunctionalCurrency(),
-                ledger.getAccountingStandard(), ledger.isAllowDynamicInsert(), ledger.isActive(),
+                ledger.getAccountingStandard(), ledger.isAllowDynamicInsert(), null, ledger.isActive(),
                 Instant.now(), Instant.now());
     }
 
