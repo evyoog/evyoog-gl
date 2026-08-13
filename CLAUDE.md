@@ -1158,3 +1158,21 @@ private Map<String, String> accountCombination;
 - Test count: 371 unit tests (361 prior + 10 new `CoaStructureServiceTest`),
   `mvn test -DskipITs` green. ITs skipped per Codespace resource constraints,
   consistent with GL-29.
+
+## Migration numbering correction (August 2026)
+- V29__coa_structure.sql is the actual file name (not V30)
+- Migration sequence: V27 (multi-dim) → V28 (account_combination registry)
+  → V28__default_dimension_value.sql → V29__coa_structure.sql
+- Always check ls src/main/resources/db/migration/ | sort before naming next migration
+
+## GL-30 COA Structure (V29 migration — August 2026)
+- gl.coa_structure: business_group scoped, shareable across Ledgers
+- finance_dimension.coa_structure_id added, ledger_id made nullable
+- ledger.coa_structure_id added
+- assignToLedger() updates both ledger.coa_structure_id AND finance_dimension.ledger_id
+  (for backward compat with existing ledger-scoped queries)
+- WARNING: multi-ledger sharing breaks ledger_id scalar — fix in Phase 2
+- GET /finance-dimensions supports both ?ledgerId= and ?coaStructureId=
+- is_postable check in PostingEngine already existed — not duplicated
+- STD-IND-MFG COA Structure auto-created from existing Orbinox data
+- Test count: 371 unit tests
