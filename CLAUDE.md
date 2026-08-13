@@ -1176,3 +1176,12 @@ private Map<String, String> accountCombination;
 - is_postable check in PostingEngine already existed — not duplicated
 - STD-IND-MFG COA Structure auto-created from existing Orbinox data
 - Test count: 371 unit tests
+
+## Migration numbering — IMPORTANT (August 2026)
+- Always run: ls src/main/resources/db/migration/ | sort
+  before naming any new migration file
+- Current highest: V29__coa_structure.sql
+- Next migration to use: V30__xxxxx.sql
+- Do NOT assume migration numbers — always check actual files first
+- Full sequence: V1-V26 (core GL) → V27 (account_combination_registry)
+  → V28 (default_dimension_value) → V29 (coa_structure)
