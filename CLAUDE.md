@@ -1185,3 +1185,23 @@ private Map<String, String> accountCombination;
 - Do NOT assume migration numbers — always check actual files first
 - Full sequence: V1-V26 (core GL) → V27 (account_combination_registry)
   → V28 (default_dimension_value) → V29 (coa_structure)
+
+## Balancing Dimension — Design Decision (August 2026)
+- Balancing Dimension concept NOT yet implemented in Phase 1
+- Current PostingEngine: only enforces Total DR = Total CR (journal level)
+- No segment-level balance enforcement yet
+
+## V30 migration — add is_balancing to finance_dimension
+- ALTER TABLE gl.finance_dimension ADD COLUMN is_balancing BOOLEAN NOT NULL DEFAULT FALSE
+- For Phase 1 Orbinox: all dimensions is_balancing=FALSE
+- LEGAL_ENTITY dimension (future) → is_balancing=TRUE
+- Enforcement in PostingEngine deferred to Phase 2 (multi-entity)
+- When enforced: journal must balance within each value of balancing segment
+- Triggers automatic intercompany entries when balancing segment crossed
+
+## Build queue — V30
+- Next migration: V30__balancing_dimension.sql
+- Add is_balancing to gl.finance_dimension
+- Add is_balancing to CoaSegmentSummary DTO
+- Update Finance Dimension API to accept/return is_balancing
+- PostingEngine enforcement: Phase 2
