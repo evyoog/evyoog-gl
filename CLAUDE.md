@@ -1205,3 +1205,44 @@ private Map<String, String> accountCombination;
 - Add is_balancing to CoaSegmentSummary DTO
 - Update Finance Dimension API to accept/return is_balancing
 - PostingEngine enforcement: Phase 2
+
+## Balancing Segment Architecture (August 2026 — LOCKED DESIGN)
+
+### Legal Entity — Implicit Primary Balancing Segment
+- Legal Entity is ALWAYS the primary balancing segment in eVyoog GL
+- Enforced implicitly via legalEntityId scoping on all GL tables
+- All financial statements (TB, P&L, BS) are inherently scoped to LE
+- NOT stored as a finance_dimension row — implicit in schema design
+- Statement: "Legal Entity is the implicit primary balancing segment.
+  is_balancing on finance_dimension controls SECONDARY balancing only."
+
+### Balancing Segment Framework
+- Maximum 3 balancing segments: 1 Primary (LE) + up to 2 Secondary
+- Secondary + Tertiary balancing segments are CUSTOMER-CHOSEN
+  Examples: Company, Business Unit, Fund, Department, Project, Grant
+- Financial statements derived at INTERSECTION of all balancing segments
+  e.g. TB for LE-INDIA + BU-NORTH + PROJECT-001
+
+### Intercompany Accounting
+- When transaction CROSSES a balancing segment → auto-generate IC entries
+- INTERCOMPANY DimensionType reserved for trading partner identification
+- Auto-generated entries: Due From IC (asset) + Due To IC (liability)
+- IC elimination required at consolidation (Phase 3)
+
+### V30 Phased Build Plan
+- V30a: is_balancing + balancing_sequence on finance_dimension (config only)
+- V30b: PostingEngine Rule 11 — detect + reject crossing without auto-entries
+- V30c: PostingEngine Rule 12 — auto intercompany entry generation (Phase 3)
+
+### AIE Phase 2 Enhancements (build queue)
+- Excel/CSV Import UI (upload + preview + error report)
+- Opening Balance Import UI
+- AIE Reconciliation dashboard
+- Field mapping configuration (source → eVyoog)
+- SFTP/S3 pickup + scheduled import (Phase 3)
+
+### Customer Prototype (Medium+ customer)
+- 7 Financial Dimensions (details TBD)
+- 2 Balancing Segments: Legal Entity + Company/BU
+- Migration from Tally-like ERP via AIE import
+- Requires V30a before prototype configuration
