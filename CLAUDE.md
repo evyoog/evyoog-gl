@@ -1308,3 +1308,14 @@ private Map<String, String> accountCombination;
 - V30b: PostingEngine enforcement (detect + reject crossing)
 - Next migration: V31
 - Test count: 380 unit tests
+
+## V30a — Stale process note (August 2026)
+- CoaSegmentSummary isBalancing/balancingSequence returned None on first test
+- Root cause: spring-boot:run was serving pre-V30a compiled classes
+- Fix: restart mvn spring-boot:run after any entity/DTO changes
+- Always restart backend after adding new fields to entities/DTOs
+
+## Ledger ID note
+- Ledger ID changes on every Docker recreate
+- Always query live: SELECT id FROM gl.ledger LIMIT 1
+- Do NOT hardcode ledger ID anywhere in CLAUDE.md
