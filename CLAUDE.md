@@ -1296,3 +1296,15 @@ private Map<String, String> accountCombination;
   -DskipITs` green. ITs skipped per Codespace resource constraints, same as
   GL-29/GL-30.
 - Next migration after V30 = V31.
+
+## GL V30a Balancing Segment Configuration (August 2026)
+- V30 migration: is_balancing BOOLEAN + balancing_sequence INTEGER on finance_dimension
+- balancing_sequence: 2=secondary, 3=tertiary (1 reserved for implicit LE primary)
+- CHECK constraint: sequence only valid (2 or 3) when is_balancing=TRUE
+- Unique partial index: one dimension per sequence per COA Structure
+- New endpoint: GET /api/v1/gl/finance-dimensions/balancing?coaStructureId={id}
+- CoaSegmentSummary updated: includes isBalancing + balancingSequence
+- PostingEngine untouched -- V30a is config only
+- V30b: PostingEngine enforcement (detect + reject crossing)
+- Next migration: V31
+- Test count: 380 unit tests
