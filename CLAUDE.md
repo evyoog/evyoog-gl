@@ -1246,3 +1246,11 @@ private Map<String, String> accountCombination;
 - 2 Balancing Segments: Legal Entity + Company/BU
 - Migration from Tally-like ERP via AIE import
 - Requires V30a before prototype configuration
+
+## AWS Deployment Plan (August 2026)
+- Backend: ECS Fargate + RDS PostgreSQL 16 + ECR
+- Frontend: S3 + CloudFront + Route 53
+- URLs: api.evyoog.com (backend) + app.evyoog.com (frontend)
+- CI/CD: GitHub Actions on push to main
+- Estimated cost: ~$66/month (dev/staging scale)
+- Dockerfiles to be built in Week 2 post-COE demo
