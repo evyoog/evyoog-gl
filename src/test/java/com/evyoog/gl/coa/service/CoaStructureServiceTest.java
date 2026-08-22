@@ -78,7 +78,8 @@ class CoaStructureServiceTest {
                 .thenReturn(List.of());
         lenient().when(ledgerRepository.countByCoaStructureIdAndIsActiveTrue(any())).thenReturn(0L);
         lenient().when(mapper.toSegmentSummary(any(), anyLong())).thenReturn(
-                new CoaSegmentSummary(UUID.randomUUID(), "SEG", "Segment", DimensionType.COST_CENTRE, 1, false, 0L));
+                new CoaSegmentSummary(UUID.randomUUID(), "SEG", "Segment", DimensionType.COST_CENTRE, 1, false, 0L,
+                        false, null));
     }
 
     private CreateCoaSegmentRequest segmentRequest(String code, DimensionType type, int number, boolean required) {

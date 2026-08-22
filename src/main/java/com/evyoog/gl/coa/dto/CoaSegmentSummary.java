@@ -11,6 +11,8 @@ public record CoaSegmentSummary(
         DimensionType dimensionType,
         int segmentNumber,
         boolean isRequired,
-        long valueCount
+        long valueCount,
+        boolean isBalancing,
+        Integer balancingSequence
 ) {
 }

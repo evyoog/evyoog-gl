@@ -12,6 +12,10 @@ public record UpdateFinanceDimensionRequest(
 
         Boolean isRequired,
 
-        Integer displayOrder
+        Integer displayOrder,
+
+        Boolean isBalancing,
+
+        Integer balancingSequence
 ) {
 }

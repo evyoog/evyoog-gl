@@ -77,10 +77,23 @@ public class FinanceDimensionService {
                     "A Ledger may have exactly one NATURAL_ACCOUNT Finance Dimension.");
         }
 
+        boolean isBalancing = request.isBalancing() != null && request.isBalancing();
+        validateBalancingConfig(isBalancing, request.balancingSequence());
+        UUID coaStructureId = ledger.getCoaStructure() != null ? ledger.getCoaStructure().getId() : null;
+        if (isBalancing && coaStructureId != null
+                && repository.existsByCoaStructureIdAndIsBalancingTrueAndBalancingSequence(
+                        coaStructureId, request.balancingSequence())) {
+            throw new EvyoogException("DUPLICATE_BALANCING_SEQUENCE",
+                    "A balancing dimension with sequence " + request.balancingSequence() +
+                            " already exists for this COA Structure.");
+        }
+
         FinanceDimension entity = mapper.toEntity(request);
         entity.setLedger(ledger);
         entity.setRequired(request.isRequired() != null && request.isRequired());
         entity.setDisplayOrder(request.displayOrder() != null ? request.displayOrder() : 0);
+        entity.setBalancing(isBalancing);
+        entity.setBalancingSequence(request.balancingSequence());
         entity.setCreatedBy(performedBy);
         entity.setUpdatedBy(performedBy);
 
@@ -99,6 +112,25 @@ public class FinanceDimensionService {
         mapper.updateFromRequest(request, entity);
         if (request.isRequired() != null) {
             entity.setRequired(request.isRequired());
+        }
+        if (request.isBalancing() != null || request.balancingSequence() != null) {
+            boolean effectiveIsBalancing = request.isBalancing() != null ? request.isBalancing() : entity.isBalancing();
+            Integer effectiveSequence = effectiveIsBalancing
+                    ? (request.balancingSequence() != null ? request.balancingSequence() : entity.getBalancingSequence())
+                    : null;
+            validateBalancingConfig(effectiveIsBalancing, effectiveSequence);
+
+            UUID coaStructureId = entity.getCoaStructure() != null ? entity.getCoaStructure().getId() : null;
+            if (effectiveIsBalancing && coaStructureId != null
+                    && repository.existsByCoaStructureIdAndIsBalancingTrueAndBalancingSequenceAndIdNot(
+                            coaStructureId, effectiveSequence, entity.getId())) {
+                throw new EvyoogException("DUPLICATE_BALANCING_SEQUENCE",
+                        "A balancing dimension with sequence " + effectiveSequence +
+                                " already exists for this COA Structure.");
+            }
+
+            entity.setBalancing(effectiveIsBalancing);
+            entity.setBalancingSequence(effectiveSequence);
         }
         entity.setUpdatedBy(performedBy);
 
@@ -149,6 +181,24 @@ public class FinanceDimensionService {
         return entities.stream()
                 .map(entity -> mapper.toResponse(entity, valueCountFor(entity.getId())))
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<FinanceDimensionResponse> getBalancingDimensions(UUID coaStructureId) {
+        return repository.findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(coaStructureId).stream()
+                .map(entity -> mapper.toResponse(entity, valueCountFor(entity.getId())))
+                .toList();
+    }
+
+    private void validateBalancingConfig(boolean isBalancing, Integer balancingSequence) {
+        if (isBalancing && (balancingSequence == null || !List.of(2, 3).contains(balancingSequence))) {
+            throw new EvyoogException("INVALID_BALANCING_SEQUENCE",
+                    "balancingSequence must be 2 (secondary) or 3 (tertiary) when isBalancing is true.");
+        }
+        if (!isBalancing && balancingSequence != null) {
+            throw new EvyoogException("INVALID_BALANCING_CONFIG",
+                    "balancingSequence must be null when isBalancing is false.");
+        }
     }
 
     private long valueCountFor(UUID financeDimensionId) {

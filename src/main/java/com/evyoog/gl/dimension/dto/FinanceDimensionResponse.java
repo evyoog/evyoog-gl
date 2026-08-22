@@ -19,6 +19,8 @@ public record FinanceDimensionResponse(
         boolean isActive,
         long valueCount,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        boolean isBalancing,
+        Integer balancingSequence
 ) {
 }

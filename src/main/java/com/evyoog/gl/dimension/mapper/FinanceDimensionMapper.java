@@ -15,6 +15,7 @@ public interface FinanceDimensionMapper {
 
     @Mapping(target = "isRequired", ignore = true)
     @Mapping(target = "displayOrder", ignore = true)
+    @Mapping(target = "isBalancing", ignore = true)
     FinanceDimension toEntity(CreateFinanceDimensionRequest request);
 
     @Mapping(source = "entity.ledger.id", target = "ledgerId")
@@ -22,10 +23,12 @@ public interface FinanceDimensionMapper {
     @Mapping(source = "entity.coaStructure.id", target = "coaStructureId")
     @Mapping(source = "entity.active", target = "isActive")
     @Mapping(source = "entity.required", target = "isRequired")
+    @Mapping(source = "entity.balancing", target = "isBalancing")
     @Mapping(source = "valueCount", target = "valueCount")
     FinanceDimensionResponse toResponse(FinanceDimension entity, long valueCount);
 
     @Mapping(target = "required", ignore = true)
+    @Mapping(target = "balancing", ignore = true)
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     void updateFromRequest(UpdateFinanceDimensionRequest request, @MappingTarget FinanceDimension entity);
 }

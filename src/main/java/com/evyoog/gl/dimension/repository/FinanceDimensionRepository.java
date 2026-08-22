@@ -29,4 +29,11 @@ public interface FinanceDimensionRepository extends JpaRepository<FinanceDimensi
     List<FinanceDimension> findByCoaStructureId(UUID coaStructureId);
 
     boolean existsByCoaStructureIdAndCode(UUID coaStructureId, String code);
+
+    List<FinanceDimension> findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(UUID coaStructureId);
+
+    boolean existsByCoaStructureIdAndIsBalancingTrueAndBalancingSequence(UUID coaStructureId, Integer balancingSequence);
+
+    boolean existsByCoaStructureIdAndIsBalancingTrueAndBalancingSequenceAndIdNot(
+            UUID coaStructureId, Integer balancingSequence, UUID id);
 }

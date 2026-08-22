@@ -54,4 +54,10 @@ public class FinanceDimension extends AuditableEntity {
 
     @Column(name = "display_order", nullable = false)
     private int displayOrder;
+
+    @Column(name = "is_balancing", nullable = false)
+    private boolean isBalancing;
+
+    @Column(name = "balancing_sequence")
+    private Integer balancingSequence;
 }

@@ -1254,3 +1254,45 @@ private Map<String, String> accountCombination;
 - CI/CD: GitHub Actions on push to main
 - Estimated cost: ~$66/month (dev/staging scale)
 - Dockerfiles to be built in Week 2 post-COE demo
+
+## V30a Balancing Segment Configuration (V30 migration — August 2026)
+- gl.finance_dimension gains is_balancing (BOOLEAN, default FALSE) and
+  balancing_sequence (INTEGER, nullable). CHECK constraint enforces
+  balancing_sequence IN (2,3) only when is_balancing=TRUE, NULL otherwise —
+  sequence 1 is reserved for the implicit Legal Entity primary balancing
+  segment and is never stored as a row. Unique partial index on
+  (coa_structure_id, balancing_sequence) WHERE is_balancing=TRUE AND
+  coa_structure_id IS NOT NULL.
+- Configuration only — PostingEngine is untouched in V30a. Enforcement is
+  deferred to V30b.
+- Service-level enforcement mirrors the DB constraints so violations surface
+  as structured 409s instead of raw constraint-violation 500s:
+  `FinanceDimensionService.validateBalancingConfig()` rejects
+  isBalancing=true with a sequence outside {2,3} (`INVALID_BALANCING_SEQUENCE`)
+  and isBalancing=false with a non-null sequence (`INVALID_BALANCING_CONFIG`).
+  A repository check scoped to the dimension's COA Structure (via
+  `ledger.getCoaStructure()` on create, `entity.getCoaStructure()` on update)
+  rejects a second dimension claiming the same sequence within that structure
+  (`DUPLICATE_BALANCING_SEQUENCE`) — only enforced when the dimension is
+  actually attached to a COA Structure, consistent with the DB partial index.
+- `CreateFinanceDimensionRequest`/`UpdateFinanceDimensionRequest`/
+  `FinanceDimensionResponse`/`CoaSegmentSummary` all gained `isBalancing` +
+  `balancingSequence` appended at the end (new record components) — existing
+  positional-constructor test call sites in `FinanceDimensionServiceTest` and
+  `CoaStructureServiceTest` were updated in lockstep, same precedent as the
+  COA Structure session.
+- `FinanceDimensionMapper`: the `isBalancing` field follows the exact same
+  MapStruct property-name quirk already documented for `isRequired` — ignore
+  target is `"isBalancing"` in `toEntity`, source/target is
+  `entity.balancing`/`isBalancing` in `toResponse`, and ignore target is
+  `"balancing"` in `updateFromRequest`. Set manually in the service in all
+  three cases, exactly mirroring the existing `isRequired` handling.
+- New endpoint `GET /api/v1/gl/finance-dimensions/balancing?coaStructureId={id}`
+  → `FinanceDimensionRepository
+  .findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc`.
+  Permission: `gl:dimension:view` (existing, no new migration needed).
+- Test count: 380 unit tests (371 prior + 9 new in
+  `FinanceDimensionServiceTest`, now 18 total in that class), `mvn test
+  -DskipITs` green. ITs skipped per Codespace resource constraints, same as
+  GL-29/GL-30.
+- Next migration after V30 = V31.

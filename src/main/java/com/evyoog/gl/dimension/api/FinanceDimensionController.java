@@ -45,6 +45,14 @@ public class FinanceDimensionController {
         return ApiResponse.created(service.create(request, userId));
     }
 
+    @GetMapping("/balancing")
+    @PreAuthorize("hasAuthority('gl:dimension:view')")
+    @Operation(summary = "List balancing dimensions for a COA Structure, ordered by balancing sequence")
+    public ApiResponse<List<FinanceDimensionResponse>> getBalancingDimensions(
+            @RequestParam UUID coaStructureId) {
+        return ApiResponse.ok(service.getBalancingDimensions(coaStructureId));
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('gl:dimension:view')")
     @Operation(summary = "Get a finance dimension by id")

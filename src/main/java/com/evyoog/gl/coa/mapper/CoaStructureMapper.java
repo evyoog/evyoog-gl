@@ -11,6 +11,7 @@ public interface CoaStructureMapper {
 
     @Mapping(source = "entity.displayOrder", target = "segmentNumber")
     @Mapping(source = "entity.required", target = "isRequired")
+    @Mapping(source = "entity.balancing", target = "isBalancing")
     @Mapping(source = "valueCount", target = "valueCount")
     CoaSegmentSummary toSegmentSummary(FinanceDimension entity, long valueCount);
 
