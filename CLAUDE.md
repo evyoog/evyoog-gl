@@ -1400,3 +1400,36 @@ private Map<String, String> accountCombination;
   Fix: reorder mutation before repository query
 - Test count: 454 unit tests + 14 PostingEngineIT passing
 - Next migration: V31
+
+## V30b Verification Steps (to run during customer POC)
+
+### Step 1 — Set COST_CENTRE as balancing via API
+COST_CTR_ID=$(docker exec evyoog-postgres psql -U evyoog_app -d evyoog_gl -t -c \
+  "SELECT id FROM gl.finance_dimension WHERE dimension_type='COST_CENTRE' LIMIT 1;" \
+  | tr -d ' \n')
+
+curl -s -X PUT "http://localhost:8080/api/v1/gl/finance-dimensions/$COST_CTR_ID" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"isBalancing": true, "balancingSequence": 2}' | python3 -m json.tool
+
+### Step 2 — Post crossing journal (expect 400 BALANCING_SEGMENT_CROSSED)
+Lines: Line1=CC-MFG, Line2=CC-SAL on same journal
+Expected error: BALANCING_SEGMENT_CROSSED with dimension name + values found
+
+### Step 3 — Post same-segment journal (expect 200 success)
+Lines: Line1=CC-MFG, Line2=CC-MFG
+Expected: journal posts successfully
+
+### Step 4 — Frontend verification
+With COST_CENTRE balancing=true:
+- Journal Entry: add 2 lines with different Cost Centres
+- Amber pre-submission warning appears
+- Click Post → purple BALANCING_SEGMENT_CROSSED banner appears
+
+### Step 5 — Reset after testing
+curl -X PUT /finance-dimensions/$COST_CTR_ID
+  d '{"isBalancing": false, "balancingSequence": null}'
+
+Note: COA Structure Edit Panel is locked for Orbinox (posted journals exist)
+Use direct API call (Step 1) to set balancing for testing purposes.
