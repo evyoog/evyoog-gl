@@ -1388,3 +1388,15 @@ private Map<String, String> accountCombination;
   auto-flush-before-query behavior means a JPA query is never guaranteed to
   see the entity from before the mapper call OR from after your own remaining
   manual mutations; it sees whatever the entity holds at that exact instant.
+
+## V30b Balancing Segment PostingEngine Enforcement (August 2026)
+- PostingEngine Rule 11: validateBalancingSegments()
+- Fires AFTER Rule 5 (dimension values) BEFORE Rule 10 (combinations)
+- Applies to both THICK and THIN posting chains
+- Error code: BALANCING_SEGMENT_CROSSED
+- No schema changes — V30 columns already in place
+- Bug fixed: FinanceDimensionService.update() duplicate-sequence check
+  ran before entity mutation complete — Hibernate flush caused 500
+  Fix: reorder mutation before repository query
+- Test count: 454 unit tests + 14 PostingEngineIT passing
+- Next migration: V31
