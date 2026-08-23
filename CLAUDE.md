@@ -1319,3 +1319,72 @@ private Map<String, String> accountCombination;
 - Ledger ID changes on every Docker recreate
 - Always query live: SELECT id FROM gl.ledger LIMIT 1
 - Do NOT hardcode ledger ID anywhere in CLAUDE.md
+
+## V30b Balancing Segment Enforcement — PostingEngine Rule 11 (August 2026)
+- No schema change — V30a's columns/repository method already covered
+  everything needed. `FinanceDimensionRepository
+  .findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc` and the
+  `FinanceDimensionRepository` injection into `PostingEngine` already existed
+  from V30a — the build prompt's steps 1 and 2 ("add the repository method",
+  "inject the repository") were both redundant with existing code. Next free
+  migration remains **V31**.
+- `validateBalancingSegments()` added to `PostingEngine`, called in both
+  `postThick()` and `postThin()` immediately after `validateDimensionValues()`
+  (Rule 5) and before `validateAccountCombinations()` (Rule 10) — matches the
+  build prompt's specified ordering. Reads `ledger.getCoaStructure()` (a
+  `@ManyToOne` entity relation, not a raw UUID field — same convention as
+  every other Ledger/FinanceDimension COA-Structure field) and short-circuits
+  when null, so Ledgers with no COA Structure assigned (or with one that has
+  no balancing dimensions) pay zero extra query cost.
+- For each `FinanceDimension` returned as balancing (ordered secondary-then-
+  tertiary), collects the account_combination value for that dimension's
+  type across every journal line into a `Set<String>` (using `null` for a
+  line that omits the key). `size() > 1` or a `null` member both mean the
+  journal crosses that balancing segment → `400 BALANCING_SEGMENT_CROSSED`.
+  Error code deliberately uses `HttpStatus.BAD_REQUEST` (matching
+  `MISSING_REQUIRED_DIMENSION`'s precedent for dimension-shape violations),
+  not the `EvyoogException` two-arg constructor's default 409.
+- Verified end to end via 9 new `PostingEngineTest` unit tests (COA Structure
+  null/no-balancing-dims/same-value/different-values/missing-value/two-dims-
+  both-must-match/error-message-content) and 2 new `PostingEngineIT`
+  Testcontainers tests that build a real COA Structure + balancing COST_CENTRE
+  segment via REST and post through `PostingEngine.post()` directly. Test
+  count: 454 unit tests (445 prior + 9 new), 14/14 `PostingEngineIT` green.
+
+### CRITICAL — `FinanceDimensionService.update()` had a live, previously-undetected bug (found and fixed while building V30b's IT coverage)
+- Only surfaces when PATCHing `isBalancing=true` on a Finance Dimension that
+  is genuinely attached to a COA Structure with at least one OTHER dimension
+  already checked for duplicates — i.e. exactly the balancing-segment setup
+  flow this session needed to exercise for real via REST. A pure Mockito unit
+  test (`FinanceDimensionServiceTest`, which mocks both `FinanceDimensionMapper`
+  and `FinanceDimensionRepository`) can never catch this — same category of
+  bug already called out for GL-26's native-query GROUP BY issue: only a
+  real-Postgres IT surfaces it.
+- **Root cause**: `update()` ran the `DUPLICATE_BALANCING_SEQUENCE`
+  `existsByCoaStructureIdAndIsBalancingTrueAndBalancingSequenceAndIdNot(...)`
+  query *before* calling `entity.setBalancing(...)`/`setBalancingSequence(...)`.
+  But `mapper.updateFromRequest(request, entity)` (called earlier, unconditionally)
+  already writes `balancingSequence` straight onto the entity for any non-null
+  request value — MapStruct's `updateFromRequest` only ignores the `balancing`
+  target, not `balancingSequence`. That left the entity briefly in an
+  inconsistent in-memory state (`balancingSequence` already set, `isBalancing`
+  still the old `false`) at the moment the `existsBy...` JPA query ran. Hibernate
+  auto-flushes pending entity state before executing any new query in the same
+  session — so it flushed that exact inconsistent row, which the DB's
+  `chk_balancing_sequence` CHECK constraint correctly rejected with a 500
+  before the service ever reached its own `setBalancing(true)` call.
+- **Fix**: moved `entity.setBalancing(effectiveIsBalancing)` +
+  `entity.setBalancingSequence(effectiveSequence)` to *before* the
+  `existsBy...` duplicate check, so the entity is never in a
+  constraint-violating state at any point Hibernate might auto-flush it. If a
+  duplicate is later found, the (now-valid) in-memory mutation is irrelevant —
+  the thrown `EvyoogException` still rolls back the whole transaction as
+  before.
+- **General lesson for this codebase**: whenever a service calls
+  `mapper.updateFromRequest(...)` and then, further down the same method, runs
+  ANY repository query (`existsBy...`, `findBy...`, `countBy...`) before
+  finishing every other field mutation on that same entity, the entity must be
+  brought to a fully self-consistent state *before* that query — Hibernate's
+  auto-flush-before-query behavior means a JPA query is never guaranteed to
+  see the entity from before the mapper call OR from after your own remaining
+  manual mutations; it sees whatever the entity holds at that exact instant.

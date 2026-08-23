@@ -1,6 +1,7 @@
 package com.evyoog.gl.posting.service;
 
 import com.evyoog.gl.aie.repository.SlaEventLogRepository;
+import com.evyoog.gl.coa.domain.CoaStructure;
 import com.evyoog.gl.combination.service.AccountCombinationService;
 import com.evyoog.gl.common.audit.service.AuditService;
 import com.evyoog.gl.common.exception.EvyoogException;
@@ -639,5 +640,212 @@ class PostingEngineTest {
         verify(accountCombinationService, times(2))
                 .validate(eq(ledgerId), eq(legalEntityId), combinationCaptor.capture(), eq(true), anyString());
         assertThat(combinationCaptor.getValue()).containsEntry("PRODUCT", "SPARES");
+    }
+
+    // ── Rule 11 — balancing segment crossing check ──────────────────────────
+
+    private static final UUID COA_STRUCTURE_ID = UUID.randomUUID();
+    private static final UUID BALANCING_PRODUCT_DIM_ID = UUID.randomUUID();
+
+    private FinanceDimension balancingCostCentreDimension() {
+        return FinanceDimension.builder().id(COST_CTR_DIM_ID)
+                .dimensionType(DimensionType.COST_CENTRE).code("COST-CTR").name("Cost Centre")
+                .isBalancing(true).balancingSequence(2).build();
+    }
+
+    private FinanceDimension balancingProductDimension() {
+        return FinanceDimension.builder().id(BALANCING_PRODUCT_DIM_ID)
+                .dimensionType(DimensionType.PRODUCT).code("PRODUCT").name("Product")
+                .isBalancing(true).balancingSequence(3).build();
+    }
+
+    private PostingRequest requestWithLineCombinations(Map<String, String> line1Combo, Map<String, String> line2Combo) {
+        PostingRequest request = balancedThickRequest();
+        request.setLines(List.of(
+                PostingLineRequest.builder().naturalAccountValueId(cashAccountId)
+                        .accountCombination(line1Combo)
+                        .debitAmount(new BigDecimal("100.00")).build(),
+                PostingLineRequest.builder().naturalAccountValueId(revenueAccountId)
+                        .accountCombination(line2Combo)
+                        .creditAmount(new BigDecimal("100.00")).build()));
+        return request;
+    }
+
+    @Test
+    void testBalancingSegment_allLinesSameCostCentre_passes() {
+        ledger.setCoaStructure(CoaStructure.builder().id(COA_STRUCTURE_ID).build());
+        FinanceDimension costCentreDim = balancingCostCentreDimension();
+        when(financeDimensionRepository
+                .findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(COA_STRUCTURE_ID))
+                .thenReturn(List.of(costCentreDim));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.COST_CENTRE))
+                .thenReturn(Optional.of(costCentreDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-MFG"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("CC-MFG").build()));
+
+        PostingResult result = postingEngine.post(
+                requestWithLineCombinations(Map.of("COST_CENTRE", "CC-MFG"), Map.of("COST_CENTRE", "CC-MFG")));
+
+        assertThat(result.isSuccess()).isTrue();
+    }
+
+    @Test
+    void testBalancingSegment_differentCostCentres_throws() {
+        ledger.setCoaStructure(CoaStructure.builder().id(COA_STRUCTURE_ID).build());
+        FinanceDimension costCentreDim = balancingCostCentreDimension();
+        when(financeDimensionRepository
+                .findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(COA_STRUCTURE_ID))
+                .thenReturn(List.of(costCentreDim));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.COST_CENTRE))
+                .thenReturn(Optional.of(costCentreDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-MFG"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("CC-MFG").build()));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-SAL"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("CC-SAL").build()));
+
+        assertThatThrownBy(() -> postingEngine.post(
+                requestWithLineCombinations(Map.of("COST_CENTRE", "CC-MFG"), Map.of("COST_CENTRE", "CC-SAL"))))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "BALANCING_SEGMENT_CROSSED");
+    }
+
+    @Test
+    void testBalancingSegment_linesMissingCostCentre_throws() {
+        ledger.setCoaStructure(CoaStructure.builder().id(COA_STRUCTURE_ID).build());
+        FinanceDimension costCentreDim = balancingCostCentreDimension();
+        when(financeDimensionRepository
+                .findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(COA_STRUCTURE_ID))
+                .thenReturn(List.of(costCentreDim));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.COST_CENTRE))
+                .thenReturn(Optional.of(costCentreDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-MFG"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("CC-MFG").build()));
+
+        assertThatThrownBy(() -> postingEngine.post(
+                requestWithLineCombinations(Map.of("COST_CENTRE", "CC-MFG"), Map.of())))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "BALANCING_SEGMENT_CROSSED");
+    }
+
+    @Test
+    void testBalancingSegment_noBalancingDimensions_passes() {
+        ledger.setCoaStructure(CoaStructure.builder().id(COA_STRUCTURE_ID).build());
+        when(financeDimensionRepository
+                .findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(COA_STRUCTURE_ID))
+                .thenReturn(List.of());
+
+        PostingResult result = postingEngine.post(balancedThickRequest());
+
+        assertThat(result.isSuccess()).isTrue();
+    }
+
+    @Test
+    void testBalancingSegment_coaStructureNull_passes() {
+        // ledger.coaStructure is null by default (see setUp) — Rule 11 must
+        // short-circuit without ever querying the balancing-dimension repo.
+        PostingResult result = postingEngine.post(balancedThickRequest());
+
+        assertThat(result.isSuccess()).isTrue();
+        verify(financeDimensionRepository, org.mockito.Mockito.never())
+                .findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(any());
+    }
+
+    @Test
+    void testBalancingSegment_twoBalancingDims_bothMustMatch() {
+        ledger.setCoaStructure(CoaStructure.builder().id(COA_STRUCTURE_ID).build());
+        FinanceDimension costCentreDim = balancingCostCentreDimension();
+        FinanceDimension productDim = balancingProductDimension();
+        when(financeDimensionRepository
+                .findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(COA_STRUCTURE_ID))
+                .thenReturn(List.of(costCentreDim, productDim));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.COST_CENTRE))
+                .thenReturn(Optional.of(costCentreDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-MFG"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("CC-MFG").build()));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.PRODUCT))
+                .thenReturn(Optional.of(productDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(BALANCING_PRODUCT_DIM_ID, "GATE-VLV"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("GATE-VLV").build()));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(BALANCING_PRODUCT_DIM_ID, "BALL-VLV"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("BALL-VLV").build()));
+
+        // COST_CENTRE matches on both lines, but PRODUCT differs — one
+        // matching balancing dimension does not excuse a mismatch on another.
+        assertThatThrownBy(() -> postingEngine.post(requestWithLineCombinations(
+                Map.of("COST_CENTRE", "CC-MFG", "PRODUCT", "GATE-VLV"),
+                Map.of("COST_CENTRE", "CC-MFG", "PRODUCT", "BALL-VLV"))))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "BALANCING_SEGMENT_CROSSED");
+    }
+
+    @Test
+    void testBalancingSegment_errorMessage_containsDimensionName() {
+        ledger.setCoaStructure(CoaStructure.builder().id(COA_STRUCTURE_ID).build());
+        FinanceDimension costCentreDim = balancingCostCentreDimension();
+        when(financeDimensionRepository
+                .findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(COA_STRUCTURE_ID))
+                .thenReturn(List.of(costCentreDim));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.COST_CENTRE))
+                .thenReturn(Optional.of(costCentreDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-MFG"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("CC-MFG").build()));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-SAL"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("CC-SAL").build()));
+
+        assertThatThrownBy(() -> postingEngine.post(
+                requestWithLineCombinations(Map.of("COST_CENTRE", "CC-MFG"), Map.of("COST_CENTRE", "CC-SAL"))))
+                .hasMessageContaining("Cost Centre");
+    }
+
+    @Test
+    void testBalancingSegment_errorMessage_containsValuesFound() {
+        ledger.setCoaStructure(CoaStructure.builder().id(COA_STRUCTURE_ID).build());
+        FinanceDimension costCentreDim = balancingCostCentreDimension();
+        when(financeDimensionRepository
+                .findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(COA_STRUCTURE_ID))
+                .thenReturn(List.of(costCentreDim));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.COST_CENTRE))
+                .thenReturn(Optional.of(costCentreDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-MFG"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("CC-MFG").build()));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-SAL"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("CC-SAL").build()));
+
+        assertThatThrownBy(() -> postingEngine.post(
+                requestWithLineCombinations(Map.of("COST_CENTRE", "CC-MFG"), Map.of("COST_CENTRE", "CC-SAL"))))
+                .hasMessageContaining("CC-MFG")
+                .hasMessageContaining("CC-SAL");
+    }
+
+    @Test
+    void testBalancingSegment_onlySecondaryEnforced_notPrimary() {
+        ledger.setCoaStructure(CoaStructure.builder().id(COA_STRUCTURE_ID).build());
+        FinanceDimension costCentreDim = balancingCostCentreDimension();
+        when(financeDimensionRepository
+                .findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(COA_STRUCTURE_ID))
+                .thenReturn(List.of(costCentreDim));
+        when(financeDimensionRepository
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.COST_CENTRE))
+                .thenReturn(Optional.of(costCentreDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(COST_CTR_DIM_ID, "CC-MFG"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("CC-MFG").build()));
+
+        // Neither line carries a LEGAL_ENTITY key in its account_combination —
+        // the implicit primary balancing segment is never a JSONB key, and
+        // Rule 11 only enforces whatever findByCoaStructureIdAndIsBalancingTrue
+        // returns (secondary/tertiary only).
+        PostingResult result = postingEngine.post(
+                requestWithLineCombinations(Map.of("COST_CENTRE", "CC-MFG"), Map.of("COST_CENTRE", "CC-MFG")));
+
+        assertThat(result.isSuccess()).isTrue();
+        verify(financeDimensionRepository, org.mockito.Mockito.never())
+                .findByLedgerIdAndDimensionTypeAndIsActiveTrue(ledgerId, DimensionType.LEGAL_ENTITY);
     }
 }

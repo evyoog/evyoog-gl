@@ -333,6 +333,93 @@ class PostingEngineIT {
                 .hasFieldOrPropertyWithValue("code", "COMBINATION_INACTIVE");
     }
 
+    // ── Rule 11 — balancing segment crossing check ──────────────────────────
+
+    @Test
+    void testPostJournal_withBalancingDim_crossingRejected() throws Exception {
+        Fixture fx = buildFixture("THICK");
+        openPeriod(fx);
+        setUpBalancingCostCentre(fx.ledgerId, "CC-MFG", "CC-SAL");
+
+        PostingRequest request = balancedRequest(fx);
+        request.setLines(List.of(
+                PostingLineRequest.builder().naturalAccountValueId(fx.cashAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-MFG"))
+                        .debitAmount(new BigDecimal("100.00")).build(),
+                PostingLineRequest.builder().naturalAccountValueId(fx.revenueAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-SAL"))
+                        .creditAmount(new BigDecimal("100.00")).build()));
+
+        assertThatThrownBy(() -> postingEngine.post(request))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "BALANCING_SEGMENT_CROSSED")
+                .hasFieldOrPropertyWithValue("status", org.springframework.http.HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void testPostJournal_withBalancingDim_sameCostCentre_accepted() throws Exception {
+        Fixture fx = buildFixture("THICK");
+        openPeriod(fx);
+        setUpBalancingCostCentre(fx.ledgerId, "CC-MFG", "CC-SAL");
+
+        PostingRequest request = balancedRequest(fx);
+        request.setLines(List.of(
+                PostingLineRequest.builder().naturalAccountValueId(fx.cashAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-MFG"))
+                        .debitAmount(new BigDecimal("100.00")).build(),
+                PostingLineRequest.builder().naturalAccountValueId(fx.revenueAccountId)
+                        .accountCombination(Map.of("COST_CENTRE", "CC-MFG"))
+                        .creditAmount(new BigDecimal("100.00")).build()));
+
+        PostingResult result = postingEngine.post(request);
+
+        assertThat(result.isSuccess()).isTrue();
+    }
+
+    // Registers COST_CENTRE as a secondary (sequence=2) balancing segment on
+    // the given Ledger's COA Structure, with a dimension value per code.
+    private UUID setUpBalancingCostCentre(UUID ledgerId, String... valueCodes) throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        UUID businessGroupId = createBusinessGroup(createConsumptionContext("CTXCOA-" + suffix),
+                "BGCOA-" + suffix, "THICK_ES");
+
+        Map<String, Object> structureRequest = Map.of(
+                "businessGroupId", businessGroupId.toString(),
+                "code", "COA-" + suffix,
+                "name", "COA Structure " + suffix,
+                "segments", List.of(Map.of(
+                        "code", "CC-" + suffix,
+                        "name", "Cost Centre",
+                        "dimensionType", "COST_CENTRE",
+                        "segmentNumber", 1,
+                        "isRequired", false)));
+
+        String createResponse = mockMvc.perform(post("/api/v1/gl/coa-structures")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(structureRequest)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        UUID coaStructureId = UUID.fromString(objectMapper.readTree(createResponse).at("/data/id").asText());
+        UUID financeDimensionId = UUID.fromString(objectMapper.readTree(createResponse).at("/data/segments/0/id").asText());
+
+        mockMvc.perform(post("/api/v1/gl/coa-structures/{id}/assign-ledger", coaStructureId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("ledgerId", ledgerId.toString()))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/gl/finance-dimensions/{id}", financeDimensionId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("isBalancing", true, "balancingSequence", 2))))
+                .andExpect(status().isOk());
+
+        for (String code : valueCodes) {
+            createDimensionValue(financeDimensionId, code, null);
+        }
+
+        return financeDimensionId;
+    }
+
     private UUID createFinanceDimensionOfType(UUID ledgerId, String code, String dimensionType, boolean isRequired) throws Exception {
         Map<String, Object> request = new HashMap<>();
         request.put("ledgerId", ledgerId.toString());

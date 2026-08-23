@@ -120,6 +120,18 @@ public class FinanceDimensionService {
                     : null;
             validateBalancingConfig(effectiveIsBalancing, effectiveSequence);
 
+            // Apply both fields to the entity BEFORE running the duplicate-sequence
+            // exists-query below. The mapper (updateFromRequest, above) already wrote
+            // balancingSequence onto the entity while isBalancing was still unset --
+            // the exists-query is a JPA query, which triggers Hibernate's auto-flush
+            // of any pending entity state in this session before it runs. Querying
+            // with the entity still in that mapper-only intermediate state (a non-null
+            // balancingSequence but isBalancing still false) flushes a row that fails
+            // the DB's chk_balancing_sequence CHECK constraint. Setting both fields
+            // together first keeps the entity's flushed state always consistent.
+            entity.setBalancing(effectiveIsBalancing);
+            entity.setBalancingSequence(effectiveSequence);
+
             UUID coaStructureId = entity.getCoaStructure() != null ? entity.getCoaStructure().getId() : null;
             if (effectiveIsBalancing && coaStructureId != null
                     && repository.existsByCoaStructureIdAndIsBalancingTrueAndBalancingSequenceAndIdNot(
@@ -128,9 +140,6 @@ public class FinanceDimensionService {
                         "A balancing dimension with sequence " + effectiveSequence +
                                 " already exists for this COA Structure.");
             }
-
-            entity.setBalancing(effectiveIsBalancing);
-            entity.setBalancingSequence(effectiveSequence);
         }
         entity.setUpdatedBy(performedBy);
 

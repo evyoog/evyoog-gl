@@ -47,8 +47,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * The accounting core of eVyoog. Every journal that is ever posted passes
@@ -97,6 +99,7 @@ public class PostingEngine {
         validateAccountsPostable(request.getLines());
         enrichWithDefaults(request.getLines(), ledger.getId());
         validateDimensionValues(request.getLines(), ledger.getId());
+        validateBalancingSegments(request.getLines(), ledger);
         validateAccountCombinations(request.getLines(), ledger, request.getLegalEntityId(), request.getPerformedBy());
         validateLegalEntityAuthorised(request.getLegalEntityId(), ledger.getId());
         validateCurrency(request, ledger);
@@ -113,6 +116,7 @@ public class PostingEngine {
         validateAccountsPostable(request.getLines());
         enrichWithDefaults(request.getLines(), ledger.getId());
         validateDimensionValues(request.getLines(), ledger.getId());
+        validateBalancingSegments(request.getLines(), ledger);
         validateAccountCombinations(request.getLines(), ledger, request.getLegalEntityId(), request.getPerformedBy());
         validateLegalEntityAuthorised(request.getLegalEntityId(), ledger.getId());
         // THIN skips rule 7 (currency) and rule 8 (approval).
@@ -347,6 +351,49 @@ public class PostingEngine {
                             "Required dimension '" + required.getDimensionType() + "' (" + required.getName() +
                                     ") is missing from account combination.", HttpStatus.BAD_REQUEST);
                 }
+            }
+        }
+    }
+
+    // ── Rule 11 — balancing segment crossing check. ──────────────────────────
+    // If any Finance Dimension on the Ledger's COA Structure has
+    // is_balancing=TRUE, every journal line must carry the SAME value for
+    // that dimension — a differing value, or a line missing it entirely,
+    // means the journal crosses the balancing segment and is rejected.
+    // Legal Entity is the implicit PRIMARY balancing segment (enforced via
+    // legalEntityId scoping elsewhere) — this rule only enforces the
+    // customer-configured SECONDARY/TERTIARY balancing segments. Runs after
+    // Rule 5 (dimension values validated + defaults enriched) so a missing
+    // value here is a genuine crossing, not an unfilled default.
+    private void validateBalancingSegments(List<PostingLineRequest> lines, Ledger ledger) {
+        if (lines == null || lines.isEmpty() || ledger.getCoaStructure() == null) {
+            return;
+        }
+
+        List<FinanceDimension> balancingDimensions = financeDimensionRepository
+                .findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(ledger.getCoaStructure().getId());
+
+        for (FinanceDimension dimension : balancingDimensions) {
+            String dimensionKey = dimension.getDimensionType().name();
+
+            Set<String> valuesFound = lines.stream()
+                    .map(line -> line.getAccountCombination() != null
+                            ? line.getAccountCombination().get(dimensionKey) : null)
+                    .collect(Collectors.toSet());
+
+            if (valuesFound.contains(null) || valuesFound.size() > 1) {
+                String values = valuesFound.stream()
+                        .map(value -> value == null ? "[missing]" : value)
+                        .collect(Collectors.joining(", "));
+                throw new EvyoogException("BALANCING_SEGMENT_CROSSED",
+                        String.format(
+                                "Journal crosses the '%s' balancing segment (%s). " +
+                                        "All lines must have the same value for '%s'. " +
+                                        "Values found: [%s]. " +
+                                        "To post across %s values, enable intercompany accounting (Phase 3).",
+                                dimension.getName(), dimensionKey, dimension.getName(),
+                                values, dimension.getName()),
+                        HttpStatus.BAD_REQUEST);
             }
         }
     }
