@@ -28,8 +28,16 @@ spring:
     enabled: true
     schemas: gl,aie,auth
     locations: classpath:db/migration
-    baseline-on-migrate: false
+    baseline-on-migrate: true
+    baseline-version: 22
+    baseline-description: gl29_audit_trail
     validate-on-migrate: true
+    # This RDS instance (vygmicroservice) is shared with other services; pgcrypto was
+    # installed by one of them into its own schema (ticket_sandbox) rather than public.
+    # Flyway sets search_path to exactly `schemas` above during migration, so V23's
+    # gen_salt()/crypt() calls can't resolve pgcrypto without this appended.
+    init-sqls:
+      - "SET search_path TO gl, aie, auth, ticket_sandbox, public"
   servlet:
     multipart:
       max-file-size: 10MB
