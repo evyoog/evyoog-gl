@@ -1433,3 +1433,8 @@ curl -X PUT /finance-dimensions/$COST_CTR_ID
 
 Note: COA Structure Edit Panel is locked for Orbinox (posted journals exist)
 Use direct API call (Step 1) to set balancing for testing purposes.
+
+## GitHub Repository (August 2026)
+- Transferred from prashantha-vyoog to evyoog org
+- Backend:  https://github.com/evyoog/evyoog-gl
+- Frontend: https://github.com/evyoog/evyoog-frontend
