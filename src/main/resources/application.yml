@@ -2,31 +2,27 @@ spring:
   application:
     name: evyoog-gl
   autoconfigure:
-    # This app authenticates purely via JwtAuthenticationFilter (SecurityContextHolder is
-    # set directly from the JWT, never through AuthenticationManager/UserDetailsService),
-    # so the default in-memory user Boot generates here is unused — exclude it to silence
-    # the "Using generated security password" boot-log noise. Boot 4 moved this class to
-    # org.springframework.boot.security.autoconfigure (NOT the Boot 3
-    # org.springframework.boot.autoconfigure.security.servlet path) — verified against
-    # the actual spring-boot-security-4.0.7.jar contents before using it here.
     exclude: org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/evyoog_gl}
-    username: ${SPRING_DATASOURCE_USERNAME:evyoog_app}
-    password: ${SPRING_DATASOURCE_PASSWORD:evyoog_dev_pass}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://vyg-batch-1.cgtfswn9milw.ap-south-1.rds.amazonaws.com:5432/vygmicroservice}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:vygpost23}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      connection-init-sql: CREATE SCHEMA IF NOT EXISTS "vyg_gl"
   jpa:
     hibernate:
       ddl-auto: validate
     show-sql: false
+    open-in-view: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
-        default_schema: gl
+        default_schema: vyg_gl
         format_sql: true
   flyway:
     enabled: true
-    schemas: gl,aie,auth
+    schemas: vyg_gl,aie,auth
     locations: classpath:db/migration
     baseline-on-migrate: false
     validate-on-migrate: true
