@@ -2,6 +2,13 @@ spring:
   application:
     name: evyoog-gl
   autoconfigure:
+    # This app authenticates purely via JwtAuthenticationFilter (SecurityContextHolder is
+    # set directly from the JWT, never through AuthenticationManager/UserDetailsService),
+    # so the default in-memory user Boot generates here is unused — exclude it to silence
+    # the "Using generated security password" boot-log noise. Boot 4 moved this class to
+    # org.springframework.boot.security.autoconfigure (NOT the Boot 3
+    # org.springframework.boot.autoconfigure.security.servlet path) — verified against
+    # the actual spring-boot-security-4.0.7.jar contents before using it here.
     exclude: org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://vyg-batch-1.cgtfswn9milw.ap-south-1.rds.amazonaws.com:5432/vygmicroservice}
@@ -22,7 +29,11 @@ spring:
         format_sql: true
   flyway:
     enabled: true
-    schemas: vyg_gl,aie,auth
+    # 'public' added because pgcrypto (gen_salt/crypt, used in V23__auth01_security.sql)
+    # is installed there, and Flyway's migration session search_path is built from
+    # exactly this list — without 'public' here, gen_salt()/crypt() calls fail with
+    # "function does not exist" even though the extension is present in the database.
+    schemas: vyg_gl,aie,auth,public
     locations: classpath:db/migration
     baseline-on-migrate: false
     validate-on-migrate: true
