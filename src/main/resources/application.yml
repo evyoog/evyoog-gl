@@ -15,25 +15,18 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:vygpost23}
     driver-class-name: org.postgresql.Driver
-    hikari:
-      connection-init-sql: CREATE SCHEMA IF NOT EXISTS "vyg_gl"
   jpa:
     hibernate:
       ddl-auto: validate
     show-sql: false
-    open-in-view: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
-        default_schema: vyg_gl
+        default_schema: gl
         format_sql: true
   flyway:
     enabled: true
-    # 'public' added because pgcrypto (gen_salt/crypt, used in V23__auth01_security.sql)
-    # is installed there, and Flyway's migration session search_path is built from
-    # exactly this list — without 'public' here, gen_salt()/crypt() calls fail with
-    # "function does not exist" even though the extension is present in the database.
-    schemas: vyg_gl,aie,auth,public
+    schemas: gl,aie,auth
     locations: classpath:db/migration
     baseline-on-migrate: false
     validate-on-migrate: true
