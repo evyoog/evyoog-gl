@@ -1438,3 +1438,17 @@ Use direct API call (Step 1) to set balancing for testing purposes.
 - Transferred from prashantha-vyoog to evyoog org
 - Backend:  https://github.com/evyoog/evyoog-gl
 - Frontend: https://github.com/evyoog/evyoog-frontend
+
+## WHO Column Gap Analysis (August 2026)
+Tables missing updated_by that should have it:
+  auth.users, auth.roles, auth.approval_policy
+  gl.coa_import_job, gl.provisioning_template, gl.gstr_export_job
+
+Acceptable gaps (system/reference/junction tables):
+  gl.audit_log (immutable), gl.journal_line (parent has WHO),
+  gl.flyway_schema_history (Flyway internal),
+  gl.context_capability, auth.role_permissions (junction tables),
+  gl.gst_transaction_summary, gl.tds_summary (system-derived),
+  gl.journal_source, gl.journal_category (reference data)
+
+V31 migration: add missing WHO columns to 6 tables above
