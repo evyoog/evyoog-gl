@@ -6,6 +6,7 @@ import com.evyoog.gl.auth.domain.UserRole;
 import com.evyoog.gl.auth.dto.AssignRoleRequest;
 import com.evyoog.gl.auth.dto.CreateUserRequest;
 import com.evyoog.gl.auth.dto.ResetPasswordResponse;
+import com.evyoog.gl.auth.dto.UpdateUserRequest;
 import com.evyoog.gl.auth.dto.UserResponse;
 import com.evyoog.gl.auth.dto.UserRoleAssignmentResponse;
 import com.evyoog.gl.auth.repository.RoleRepository;
@@ -92,11 +93,31 @@ public class UserService {
     }
 
     @Transactional
+    public UserResponse updateUser(UUID id, UpdateUserRequest request, String performedBy) {
+        User user = findOrThrow(id);
+        UserResponse before = toResponse(user);
+
+        if (request.fullName() != null) {
+            user.setFullName(request.fullName());
+        }
+        if (request.isActive() != null) {
+            user.setActive(request.isActive());
+        }
+        user.setUpdatedBy(performedBy);
+
+        User saved = userRepository.save(user);
+        UserResponse response = toResponse(saved);
+        auditService.log(AuditAction.UPDATE, "auth_user", saved.getId(), before, response, performedBy);
+        return response;
+    }
+
+    @Transactional
     public UserResponse deactivate(UUID id, String performedBy) {
         User user = findOrThrow(id);
         UserResponse before = toResponse(user);
 
         user.setActive(false);
+        user.setUpdatedBy(performedBy);
         User saved = userRepository.save(user);
 
         UserResponse response = toResponse(saved);
@@ -111,6 +132,7 @@ public class UserService {
         String temporaryPassword = generateTemporaryPassword();
         user.setPasswordHash(passwordEncoder.encode(temporaryPassword));
         user.setMustChangePwd(true);
+        user.setUpdatedBy(performedBy);
         User saved = userRepository.save(user);
 
         auditService.log(AuditAction.UPDATE, "auth_user", saved.getId(), null,
@@ -166,7 +188,8 @@ public class UserService {
 
     private UserResponse toResponse(User user) {
         return new UserResponse(user.getId(), user.getEmail(), user.getFullName(),
-                user.isActive(), user.isMustChangePwd(), user.getLastLoginAt(), user.getCreatedAt());
+                user.isActive(), user.isMustChangePwd(), user.getLastLoginAt(), user.getCreatedAt(),
+                user.getUpdatedBy());
     }
 
     private User findOrThrow(UUID id) {

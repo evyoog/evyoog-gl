@@ -2,6 +2,7 @@ package com.evyoog.gl.auth.api;
 
 import com.evyoog.gl.auth.dto.ApprovalPolicyRequest;
 import com.evyoog.gl.auth.dto.ApprovalPolicyResponse;
+import com.evyoog.gl.auth.dto.UpdateApprovalPolicyRequest;
 import com.evyoog.gl.auth.service.ApprovalPolicyService;
 import com.evyoog.gl.common.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -12,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -58,6 +60,16 @@ public class ApprovalPolicyController {
             @Valid @RequestBody ApprovalPolicyRequest request,
             @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId) {
         return ApiResponse.ok(service.update(id, request, userId));
+    }
+
+    @PatchMapping("/{id}")
+    @PreAuthorize("hasAuthority('gl:approval-policy:manage')")
+    @Operation(summary = "Partially update an approval policy's requires-approval flag, threshold, approver role or active flag")
+    public ApiResponse<ApprovalPolicyResponse> patch(
+            @PathVariable UUID id,
+            @RequestBody UpdateApprovalPolicyRequest request,
+            @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId) {
+        return ApiResponse.ok(service.updatePolicy(id, request, userId));
     }
 
     @DeleteMapping("/{id}")

@@ -21,6 +21,7 @@ public record CoaImportJobResponse(
         Instant completedAt,
         Instant createdAt,
         Instant updatedAt,
-        UUID createdBy
+        UUID createdBy,
+        UUID updatedBy
 ) {
 }

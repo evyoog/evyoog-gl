@@ -15,6 +15,7 @@ public record ApprovalPolicyResponse(
         boolean requiresApproval,
         BigDecimal approvalThresholdAmount,
         String approverRoleCode,
-        boolean isActive
+        boolean isActive,
+        String updatedBy
 ) {
 }

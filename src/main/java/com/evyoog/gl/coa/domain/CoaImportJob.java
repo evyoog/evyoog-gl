@@ -93,4 +93,7 @@ public class CoaImportJob {
 
     @Column(name = "created_by")
     private UUID createdBy;
+
+    @Column(name = "updated_by")
+    private UUID updatedBy;
 }

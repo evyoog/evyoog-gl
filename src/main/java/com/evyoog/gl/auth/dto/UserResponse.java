@@ -10,6 +10,7 @@ public record UserResponse(
         boolean isActive,
         boolean mustChangePwd,
         Instant lastLoginAt,
-        Instant createdAt
+        Instant createdAt,
+        String updatedBy
 ) {
 }

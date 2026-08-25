@@ -3,6 +3,7 @@ package com.evyoog.gl.auth.service;
 import com.evyoog.gl.auth.domain.ApprovalPolicy;
 import com.evyoog.gl.auth.dto.ApprovalPolicyRequest;
 import com.evyoog.gl.auth.dto.ApprovalPolicyResponse;
+import com.evyoog.gl.auth.dto.UpdateApprovalPolicyRequest;
 import com.evyoog.gl.auth.repository.ApprovalPolicyRepository;
 import com.evyoog.gl.common.audit.domain.AuditAction;
 import com.evyoog.gl.common.audit.service.AuditService;
@@ -104,6 +105,32 @@ public class ApprovalPolicyService {
         policy.setRequiresApproval(request.requiresApproval());
         policy.setApprovalThresholdAmount(request.approvalThresholdAmount());
         policy.setApproverRoleCode(request.approverRoleCode());
+        policy.setUpdatedBy(performedBy);
+
+        ApprovalPolicy saved = policyRepository.save(policy);
+        ApprovalPolicyResponse response = toResponse(saved);
+        auditService.log(AuditAction.UPDATE, "auth_approval_policy", saved.getId(), before, response, performedBy);
+        return response;
+    }
+
+    @Transactional
+    public ApprovalPolicyResponse updatePolicy(UUID id, UpdateApprovalPolicyRequest request, String performedBy) {
+        ApprovalPolicy policy = findOrThrow(id);
+        ApprovalPolicyResponse before = toResponse(policy);
+
+        if (request.requiresApproval() != null) {
+            policy.setRequiresApproval(request.requiresApproval());
+        }
+        if (request.approvalThresholdAmount() != null) {
+            policy.setApprovalThresholdAmount(request.approvalThresholdAmount());
+        }
+        if (request.approverRoleCode() != null) {
+            policy.setApproverRoleCode(request.approverRoleCode());
+        }
+        if (request.isActive() != null) {
+            policy.setActive(request.isActive());
+        }
+        policy.setUpdatedBy(performedBy);
 
         ApprovalPolicy saved = policyRepository.save(policy);
         ApprovalPolicyResponse response = toResponse(saved);
@@ -117,6 +144,7 @@ public class ApprovalPolicyService {
         ApprovalPolicyResponse before = toResponse(policy);
 
         policy.setActive(false);
+        policy.setUpdatedBy(performedBy);
         ApprovalPolicy saved = policyRepository.save(policy);
 
         auditService.log(AuditAction.DELETE, "auth_approval_policy", saved.getId(), before, toResponse(saved), performedBy);
@@ -138,6 +166,7 @@ public class ApprovalPolicyService {
                 .approvalThresholdAmount(policy.getApprovalThresholdAmount())
                 .approverRoleCode(policy.getApproverRoleCode())
                 .isActive(policy.isActive())
+                .updatedBy(policy.getUpdatedBy())
                 .build();
     }
 

@@ -186,6 +186,7 @@ public class CoaImportJobService {
         job.setErrorDetails(rowErrors.isEmpty() ? null : Map.of("errors", rowErrors));
         job.setStatus(status);
         job.setCompletedAt(Instant.now());
+        job.setUpdatedBy(createdBy);
 
         CoaImportJob saved = repository.saveAndFlush(job);
         CoaImportJobResponse response = mapper.toResponse(saved);

@@ -76,6 +76,7 @@ public class RoleService {
         if (request.isActive() != null) {
             role.setActive(request.isActive());
         }
+        role.setUpdatedBy(performedBy);
 
         Role saved = roleRepository.save(role);
         RoleResponse response = toResponse(saved);
@@ -123,6 +124,7 @@ public class RoleService {
                 .isSystemRole(role.isSystemRole())
                 .isActive(role.isActive())
                 .permissions(role.getPermissions().stream().map(Permission::getCode).collect(Collectors.toSet()))
+                .updatedBy(role.getUpdatedBy())
                 .build();
     }
 

@@ -13,6 +13,7 @@ public record RoleResponse(
         String description,
         boolean isSystemRole,
         boolean isActive,
-        Set<String> permissions
+        Set<String> permissions,
+        String updatedBy
 ) {
 }

@@ -3,6 +3,7 @@ package com.evyoog.gl.auth.api;
 import com.evyoog.gl.auth.dto.AssignRoleRequest;
 import com.evyoog.gl.auth.dto.CreateUserRequest;
 import com.evyoog.gl.auth.dto.ResetPasswordResponse;
+import com.evyoog.gl.auth.dto.UpdateUserRequest;
 import com.evyoog.gl.auth.dto.UserResponse;
 import com.evyoog.gl.auth.dto.UserRoleAssignmentResponse;
 import com.evyoog.gl.auth.service.UserService;
@@ -58,6 +59,16 @@ public class UserController {
     @Operation(summary = "Get a user by id")
     public ApiResponse<UserResponse> getById(@PathVariable UUID id) {
         return ApiResponse.ok(service.getById(id));
+    }
+
+    @PatchMapping("/{id}")
+    @PreAuthorize("hasAuthority('gl:users:edit')")
+    @Operation(summary = "Update a user's full name and/or active flag")
+    public ApiResponse<UserResponse> update(
+            @PathVariable UUID id,
+            @Valid @RequestBody UpdateUserRequest request,
+            @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId) {
+        return ApiResponse.ok(service.updateUser(id, request, userId));
     }
 
     @PatchMapping("/{id}/deactivate")
