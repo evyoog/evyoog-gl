@@ -15,9 +15,9 @@
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteEnv": {
-    "SPRING_DATASOURCE_URL": "jdbc:postgresql://localhost:5432/evyoog_gl",
-    "SPRING_DATASOURCE_USERNAME": "evyoog_app",
-    "SPRING_DATASOURCE_PASSWORD": "evyoog_dev_pass",
+    "SPRING_DATASOURCE_URL": "jdbc:postgresql://vyg-batch-1.cgtfswn9milw.ap-south-1.rds.amazonaws.com:5432/vygmicroservice",
+    "SPRING_DATASOURCE_USERNAME": "postgres",
+    "SPRING_DATASOURCE_PASSWORD": "vygpost23",
     "SPRING_PROFILES_ACTIVE": "dev"
   },
   "customizations": {
@@ -52,11 +52,11 @@
           {
             "name": "eVyoog GL (dev)",
             "driver": "PostgreSQL",
-            "server": "localhost",
+            "server": "vyg-batch-1.cgtfswn9milw.ap-south-1.rds.amazonaws.com",
             "port": 5432,
-            "database": "evyoog_gl",
-            "username": "evyoog_app",
-            "password": "evyoog_dev_pass"
+            "database": "vygmicroservice",
+            "username": "postgres",
+            "password": "vygpost23"
           }
         ],
         "rest-client.environmentVariables": {

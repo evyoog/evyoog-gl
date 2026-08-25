@@ -58,8 +58,8 @@ Rule 4 — UUID keys: all primary keys are UUID via uuid_generate_v4()
 ## Database
 
 ```
-Database name : evyoog_gl
-Schemas       : gl (25 tables)  ·  aie (6 tables)
+Database name : vygmicroservice   (shared RDS instance vyg-batch-1, ap-south-1)
+Schemas       : gl (25 tables)  ·  aie (6 tables)  ·  auth
 Total         : 31 tables · 92 indexes · 3 views
 Extensions    : uuid-ossp · pgcrypto
 Migrations    : Flyway V1__baseline.sql = full evyoog_gl_schema_v2.sql
@@ -71,9 +71,9 @@ Migrations    : Flyway V1__baseline.sql = full evyoog_gl_schema_v2.sql
 ```yaml
 spring:
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/evyoog_gl}
-    username: ${SPRING_DATASOURCE_USERNAME:evyoog_app}
-    password: ${SPRING_DATASOURCE_PASSWORD:evyoog_dev_pass}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://vyg-batch-1.cgtfswn9milw.ap-south-1.rds.amazonaws.com:5432/vygmicroservice}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:vygpost23}
   jpa:
     hibernate:
       ddl-auto: validate   # Flyway manages schema — JPA only validates

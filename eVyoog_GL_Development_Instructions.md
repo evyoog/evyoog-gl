@@ -126,9 +126,9 @@ Add the following file to your repository at `.devcontainer/devcontainer.json`:
     }
   },
   "remoteEnv": {
-    "SPRING_DATASOURCE_URL": "jdbc:postgresql://localhost:5432/evyoog_gl",
-    "SPRING_DATASOURCE_USERNAME": "evyoog_app",
-    "SPRING_DATASOURCE_PASSWORD": "evyoog_dev_pass"
+    "SPRING_DATASOURCE_URL": "jdbc:postgresql://vyg-batch-1.cgtfswn9milw.ap-south-1.rds.amazonaws.com:5432/vygmicroservice",
+    "SPRING_DATASOURCE_USERNAME": "postgres",
+    "SPRING_DATASOURCE_PASSWORD": "vygpost23"
   }
 }
 ```
@@ -153,8 +153,8 @@ java -version
 # Confirm Maven
 mvn -version
 
-# Confirm PostgreSQL is running
-psql -h localhost -U evyoog_app -d evyoog_gl -c "SELECT version();"
+# Confirm PostgreSQL is reachable
+psql -h vyg-batch-1.cgtfswn9milw.ap-south-1.rds.amazonaws.com -U postgres -d vygmicroservice -c "SELECT version();"
 
 # Confirm Docker (for Testcontainers)
 docker --version
@@ -167,9 +167,9 @@ All four must return without errors before starting any capability build.
 The `devcontainer.json` above sets these automatically. If you need to override locally:
 
 ```bash
-export SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/evyoog_gl
-export SPRING_DATASOURCE_USERNAME=evyoog_app
-export SPRING_DATASOURCE_PASSWORD=evyoog_dev_pass
+export SPRING_DATASOURCE_URL=jdbc:postgresql://vyg-batch-1.cgtfswn9milw.ap-south-1.rds.amazonaws.com:5432/vygmicroservice
+export SPRING_DATASOURCE_USERNAME=postgres
+export SPRING_DATASOURCE_PASSWORD=vygpost23
 export SPRING_PROFILES_ACTIVE=dev
 ```
 
@@ -382,9 +382,9 @@ spring:
   application:
     name: evyoog-gl
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/evyoog_gl}
-    username: ${SPRING_DATASOURCE_USERNAME:evyoog_app}
-    password: ${SPRING_DATASOURCE_PASSWORD:evyoog_dev_pass}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://vyg-batch-1.cgtfswn9milw.ap-south-1.rds.amazonaws.com:5432/vygmicroservice}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:vygpost23}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -426,8 +426,8 @@ logging:
 
 ### 5.1 Overview
 
-- **Database name**: `evyoog_gl`
-- **Schemas**: `gl` (25 tables), `aie` (6 tables)
+- **Database name**: `vygmicroservice` (shared RDS instance `vyg-batch-1`, ap-south-1)
+- **Schemas**: `gl` (25 tables), `aie` (6 tables), `auth`
 - **Total**: 31 tables, 92 indexes, 3 views
 - **Migrations**: Flyway, one SQL file per capability, versioned V1, V2, V3...
 - **Schema file**: `evyoog_gl_schema_v2.sql` — the complete baseline
