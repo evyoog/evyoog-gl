@@ -1530,3 +1530,63 @@ V31 migration: add missing WHO columns to 6 tables above
   3 in new `UserServiceTest`, 1 added to existing `ApprovalPolicyServiceTest`),
   `mvn test -DskipITs` green.
 - Next migration after V31 = V32.
+
+## AIE ExcelParser Dynamic Dimensions (August 2026 — no schema change)
+- No V32 migration — code-only fix. `GET /api/v1/aie/excel/template` and
+  `ExcelParserService.parse()`/`generateTemplate()` no longer hardcode a
+  fixed 12-column layout; both derive dimension columns dynamically from
+  the target Ledger's COA Structure (`ledger.getCoaStructure()` — a
+  `@ManyToOne` entity relation, not a raw UUID field, same convention as
+  every other COA-Structure-linked entity — then
+  `FinanceDimensionRepository.findByCoaStructureIdAndIsActiveTrueOrderByDisplayOrderAsc(...)`).
+- **`DimensionType` enum reality corrects the build prompt's assumption**:
+  the actual enum is `LEGAL_ENTITY, NATURAL_ACCOUNT, COST_CENTRE,
+  PROFIT_CENTRE, INTERCOMPANY, PRODUCT, PROJECT, CUSTOM` — there is no
+  `CUSTOM_1`..`CUSTOM_7` family as the prompt's 7-dimension example implied.
+  A ledger needing more than one customer-defined segment has to reuse the
+  single generic `CUSTOM` type (or one of the other typed slots) — that's
+  an existing enum limitation, not something this fix changed or was asked
+  to change.
+- Column headers are `FinanceDimension.code` (e.g. `NAT-ACCT`, `COST-CTR`),
+  matched case/punctuation-insensitively via the parser's existing
+  `normalise()` (lowercases, strips non-alphanumerics) — reused unchanged
+  for both the fixed columns and the new dynamic dimension columns, so
+  `"COST-CTR"` and `"Cost Centre"`-style header variance both resolve to
+  the same key as long as they normalise identically to the dimension code.
+- `accountCombination` is keyed by `DimensionType.name()` for every
+  dimension column present with a non-blank value, **including
+  `NATURAL_ACCOUNT`** — confirmed safe against `PostingEngine
+  .validateDimensionValues()` (Rule 5), which explicitly `continue`s past a
+  `NATURAL_ACCOUNT` key rather than rejecting it, and needed by
+  `AccountCombinationService`'s registry `combination_code` format (e.g.
+  `"5100.CC-MFG"`), which already expects the natural account segment to be
+  part of the combination. `accountCode` (used separately by
+  `AiePipelineService.enrich()` to resolve `naturalAccountValueId`) is set
+  from the same `NATURAL_ACCOUNT` column value, not extracted from the map.
+- **Backward compatibility, two layers**: (1) if a line's dimension columns
+  don't yield a `NATURAL_ACCOUNT` value (ledger has no COA Structure, or the
+  uploaded file still uses the old static header), the parser falls back to
+  a legacy `accountCode` column lookup, unchanged from the old fixed-layout
+  behaviour; (2) `generateTemplate(ledgerId)` returns the old static
+  12-column template whenever the resolved dimension list is empty (no COA
+  Structure on the ledger, ledger not found, or `ledgerId` null), and the
+  new dynamic template only once dimensions actually resolve. The
+  `GET /template` endpoint itself makes `ledgerId` a required query param
+  per this fix's spec — the null-safe fallback in the service exists for
+  defensiveness/tests, not because the endpoint allows omitting it.
+- New "Instructions" sheet added to the dynamic template only, listing each
+  fixed/dimension/trailing column's purpose plus the DR=CR / unique-eventId
+  / valid-dimension-value rules.
+- `ExcelParserService` gained `LedgerRepository` + `FinanceDimensionRepository`
+  constructor deps (`@RequiredArgsConstructor`) — the previous no-arg unit
+  test instantiation no longer compiles; `ExcelParserServiceTest` now uses
+  `@ExtendWith(MockitoExtension.class)` with `@Mock` repositories. Mockito's
+  default answer returns `Optional.empty()` for an unstubbed
+  `Optional`-returning method, so every pre-existing legacy-layout test
+  needed no stubbing at all to keep exercising the "no COA Structure"
+  fallback path unchanged.
+- `com.evyoog.gl.coa.excel.service.CoaExcelParserService` (GL-06 COA import,
+  a different capability/table entirely) was not touched — its own
+  `generateTemplate()` still takes no arguments.
+- Test count: 471 unit tests total (`ExcelParserServiceTest` grew from 7 to
+  15 — 8 new dynamic-dimension tests), `mvn test -DskipITs` green.

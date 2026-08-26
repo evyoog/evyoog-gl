@@ -63,3 +63,6 @@ logging:
   level:
     com.evyoog: INFO
     org.flywaydb: INFO
+
+cors:
+  allowed-origins: "https://probable-spork-wvr5w4xg9jp93xq5-5173.app.github.dev,https://finance-api.evyoog.com"

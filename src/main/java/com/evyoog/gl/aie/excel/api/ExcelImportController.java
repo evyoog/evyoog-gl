@@ -65,9 +65,9 @@ public class ExcelImportController {
 
     @GetMapping("/template")
     @PreAuthorize("hasAuthority('gl:aie:view')")
-    @Operation(summary = "Download a blank Excel template for GL-17 journal import")
-    public ResponseEntity<byte[]> downloadTemplate() throws IOException {
-        byte[] template = excelParserService.generateTemplate();
+    @Operation(summary = "Download a customer-specific Excel template (dimension columns follow the Ledger's COA Structure) for GL-17 journal import")
+    public ResponseEntity<byte[]> downloadTemplate(@RequestParam UUID ledgerId) throws IOException {
+        byte[] template = excelParserService.generateTemplate(ledgerId);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=journal_import_template.xlsx")
                 .contentType(MediaType.parseMediaType(
