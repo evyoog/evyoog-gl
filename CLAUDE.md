@@ -1590,3 +1590,15 @@ V31 migration: add missing WHO columns to 6 tables above
   `generateTemplate()` still takes no arguments.
 - Test count: 471 unit tests total (`ExcelParserServiceTest` grew from 7 to
   15 — 8 new dynamic-dimension tests), `mvn test -DskipITs` green.
+
+## AIE Excel Import — Dynamic Dimensions (August 2026)
+- ExcelParserService now loads dimensions from Ledger COA Structure
+- Template: GET /api/v1/aie/excel/template?ledgerId={id} — REQUIRED param
+- Template columns: fixed headers + one col per dimension + debit/credit
+- Column header = dimension.code (e.g. NAT-ACCT, COST-CTR, PRODUCT)
+- Parser reads header row → maps dimension code → DimensionType → combination key
+- accountCombination key = DimensionType.name() (NATURAL_ACCOUNT, COST_CENTRE etc.)
+- NATURAL_ACCOUNT also set as accountCode for AiePipelineService.enrich()
+- DimensionType enum has single CUSTOM (not CUSTOM_1..CUSTOM_7)
+- Falls back to legacy 12-col layout when no COA Structure configured
+- Test count: 471 unit tests
