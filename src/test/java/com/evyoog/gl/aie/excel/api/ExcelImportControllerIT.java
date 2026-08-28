@@ -147,7 +147,10 @@ class ExcelImportControllerIT {
 
     @Test
     void testDownloadTemplate_returnsXlsxFile() throws Exception {
-        mockMvc.perform(get("/api/v1/aie/excel/template"))
+        Fixture fx = buildFixture();
+
+        mockMvc.perform(get("/api/v1/aie/excel/template")
+                        .param("ledgerId", fx.ledgerId.toString()))
                 .andExpect(status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
                         .header().string("Content-Disposition",
