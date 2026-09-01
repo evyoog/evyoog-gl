@@ -52,8 +52,11 @@ public class AccountingCalendarController {
 
     @GetMapping
     @PreAuthorize("hasAuthority('gl:period:view')")
-    @Operation(summary = "Get the Accounting Calendar for a Ledger, if one exists")
-    public ApiResponse<AccountingCalendarResponse> getByLedgerId(@RequestParam UUID ledgerId) {
+    @Operation(summary = "Get the Accounting Calendar for a Ledger, or all Calendars when ledgerId is omitted")
+    public ApiResponse<?> getByLedgerId(@RequestParam(required = false) UUID ledgerId) {
+        if (ledgerId == null) {
+            return ApiResponse.ok(service.getAll());
+        }
         return ApiResponse.ok(service.getByLedgerId(ledgerId).orElse(null));
     }
 
