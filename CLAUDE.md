@@ -1712,5 +1712,5 @@ V31 migration: add missing WHO columns to 6 tables above
 - GET /api/v1/gl/accounting-calendars — ledgerId now optional
 - No ledgerId → returns ALL calendars (getAll())
 - ledgerId provided → returns single calendar for that ledger
-- getAll() was already in service — just exposed in controller
+- getAll() was added to service this session (was missing), then exposed in controller
 - Next migration: V32
