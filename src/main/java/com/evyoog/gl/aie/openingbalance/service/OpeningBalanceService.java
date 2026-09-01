@@ -138,9 +138,12 @@ public class OpeningBalanceService {
             OpeningBalancePreviewLine line = preview.lines().get(i);
             Map<String, String> combination = new HashMap<>(parsed.parsedLines().get(i).dimensionValues());
             combination.put(DimensionType.NATURAL_ACCOUNT.name(), line.accountCode());
+            // gl.journal_line's ck_debit_or_credit constraint requires the
+            // non-applicable side to be NULL, not zero — the preview DTO keeps
+            // 0 for display, but the pipeline must receive null here.
             lines.add(new AieLineRequest(
                     line.lineNumber(), line.accountCode(), combination,
-                    line.drAmount(), line.crAmount(), line.description(),
+                    nullIfZero(line.drAmount()), nullIfZero(line.crAmount()), line.description(),
                     null, null, null, null));
         }
 
@@ -167,6 +170,10 @@ public class OpeningBalanceService {
                 .message(pipelineResponse.message())
                 .errors(pipelineResponse.errors().stream().map(e -> e.errorMessage()).toList())
                 .build();
+    }
+
+    private BigDecimal nullIfZero(BigDecimal value) {
+        return value == null || value.compareTo(BigDecimal.ZERO) == 0 ? null : value;
     }
 
     // ── shared parse + validate + classify ──────────────────────────────────

@@ -2,6 +2,7 @@ package com.evyoog.gl.aie.openingbalance.service;
 
 import com.evyoog.gl.aie.dto.AieImportRequest;
 import com.evyoog.gl.aie.dto.AieImportResponse;
+import com.evyoog.gl.aie.dto.AieLineRequest;
 import com.evyoog.gl.aie.service.AiePipelineService;
 import com.evyoog.gl.coa.domain.CoaStructure;
 import com.evyoog.gl.aie.openingbalance.dto.OpeningBalanceImportResponse;
@@ -330,5 +331,54 @@ class OpeningBalanceServiceTest {
         verify(aiePipelineService).ingest(captor.capture(), eq("MANUAL"), eq("OPENING"));
         assertThat(captor.getValue().eventId()).startsWith("OB-");
         assertThat(captor.getValue().sourceSystem()).isEqualTo("OPENING_BALANCE");
+    }
+
+    @Test
+    void testImport_opposingAmountIsNullNotZero() throws Exception {
+        // gl.journal_line's ck_debit_or_credit constraint requires the
+        // non-applicable side to be NULL, not zero.
+        stubAccount("1100", AccountQualifier.ASSET, NormalBalance.DR);
+        stubAccount("3100", AccountQualifier.EQUITY, NormalBalance.CR);
+
+        MockMultipartFile file = workbook(new String[][]{
+                {"1100", "CC-ADM", "500000", "Cash"},
+                {"3100", "CC-ADM", "500000", "Partners Capital"}
+        });
+
+        when(aiePipelineService.ingest(any(AieImportRequest.class), eq("MANUAL"), eq("OPENING")))
+                .thenReturn(AieImportResponse.builder()
+                        .status("POSTED")
+                        .journalHeaderId(UUID.randomUUID())
+                        .journalNumber("JE-0003")
+                        .message("Batch imported and posted successfully.")
+                        .errors(List.of())
+                        .build());
+
+        service.importBalances(file, UUID.randomUUID(), ledgerId, UUID.randomUUID(), "accountant@orbinox.com");
+
+        ArgumentCaptor<AieImportRequest> captor = ArgumentCaptor.forClass(AieImportRequest.class);
+        verify(aiePipelineService).ingest(captor.capture(), eq("MANUAL"), eq("OPENING"));
+
+        AieLineRequest drLine = captor.getValue().lines().get(0);
+        assertThat(drLine.debitAmount()).isEqualByComparingTo("500000");
+        assertThat(drLine.creditAmount()).isNull();
+
+        AieLineRequest crLine = captor.getValue().lines().get(1);
+        assertThat(crLine.creditAmount()).isEqualByComparingTo("500000");
+        assertThat(crLine.debitAmount()).isNull();
+    }
+
+    @Test
+    void testPreview_opposingAmountShownAsZeroForDisplay() throws Exception {
+        stubAccount("1100", AccountQualifier.ASSET, NormalBalance.DR);
+
+        MockMultipartFile file = workbook(new String[][]{
+                {"1100", "CC-ADM", "500000", "Cash"}
+        });
+
+        OpeningBalancePreviewResponse response = service.preview(file, UUID.randomUUID(), ledgerId, UUID.randomUUID());
+
+        assertThat(response.lines().get(0).drAmount()).isEqualByComparingTo("500000");
+        assertThat(response.lines().get(0).crAmount()).isEqualByComparingTo("0");
     }
 }

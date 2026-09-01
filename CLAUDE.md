@@ -1684,3 +1684,26 @@ V31 migration: add missing WHO columns to 6 tables above
   `OpeningBalanceServiceTest`), `mvn test -DskipITs` green. ITs skipped per
   the established GL-29/GL-30/V30a/V31 Codespace-resource-constraint
   precedent.
+
+### Opening Balance Import — ck_debit_or_credit fix (August 2026)
+- `gl.journal_line`'s `ck_debit_or_credit` CHECK constraint requires the
+  non-applicable side to be `NULL`, not `0` — the initial cut set the
+  opposite amount to `BigDecimal.ZERO` when classifying DR/CR (a DR line got
+  `creditAmount = 0` instead of `null`), which passes every Mockito unit test
+  (nothing touches a real constraint) but would fail at insert time against
+  real Postgres — same category of bug as GL-26's GROUP BY issue and V30b's
+  Hibernate-flush issue: only a real-Postgres path catches it, not a mocked
+  repository test.
+- Fix is scoped to the boundary between the preview DTO and the pipeline
+  request, not the classification logic itself: `OpeningBalancePreviewLine
+  .drAmount()/.crAmount()` still hold `0` on the non-applicable side (kept
+  for preview-grid display), but `importBalances()` now passes each through
+  a new `nullIfZero(BigDecimal)` helper before constructing `AieLineRequest`,
+  so the pipeline/Posting Engine only ever sees `null` there, never `0`.
+- Verified via two new unit tests: `testImport_opposingAmountIsNullNotZero`
+  (captures the `AieImportRequest` sent to `AiePipelineService.ingest()` and
+  asserts each line's non-applicable amount is `null`) and
+  `testPreview_opposingAmountShownAsZeroForDisplay` (confirms the preview
+  response itself is unchanged, still `0`).
+- Test count: 483 unit tests (481 prior + 2 new), `mvn test -DskipITs`
+  green.
