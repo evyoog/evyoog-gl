@@ -1707,3 +1707,10 @@ V31 migration: add missing WHO columns to 6 tables above
   response itself is unchanged, still `0`).
 - Test count: 483 unit tests (481 prior + 2 new), `mvn test -DskipITs`
   green.
+
+## Calendar Management — Backend Fix (September 2026)
+- GET /api/v1/gl/accounting-calendars — ledgerId now optional
+- No ledgerId → returns ALL calendars (getAll())
+- ledgerId provided → returns single calendar for that ledger
+- getAll() was already in service — just exposed in controller
+- Next migration: V32
