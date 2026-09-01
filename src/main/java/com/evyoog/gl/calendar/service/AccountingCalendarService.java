@@ -122,6 +122,13 @@ public class AccountingCalendarService {
         return repository.findByLedgerId(ledgerId).map(this::enrichCurrent);
     }
 
+    @Transactional(readOnly = true)
+    public List<AccountingCalendarResponse> getAll() {
+        return repository.findAll().stream()
+                .map(this::enrichCurrent)
+                .toList();
+    }
+
     private AccountingCalendarResponse enrichCurrent(AccountingCalendar entity) {
         int currentFiscalYear = fiscalYearStartYearFor(LocalDate.now(), entity.getFiscalYearStartMonth(), entity.getFiscalYearStartDay());
         String fiscalYearName = accountingPeriodService.deriveFiscalYearName(entity.getFiscalYearStartMonth(), currentFiscalYear);
