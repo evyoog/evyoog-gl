@@ -88,6 +88,14 @@ public class AiePipelineService {
 
     @Transactional
     public AieImportResponse ingest(AieImportRequest request) {
+        return ingest(request, IMPORT_CODE, IMPORT_CODE);
+    }
+
+    // Overload used by callers that need a Journal Source/Category other than
+    // the default IMPORT/IMPORT (e.g. Opening Balance Import posts as
+    // MANUAL/OPENING) without duplicating the 4-stage pipeline below.
+    @Transactional
+    public AieImportResponse ingest(AieImportRequest request, String journalSourceCode, String journalCategoryCode) {
         if (deduplicationLogRepository.existsByEventId(request.eventId())) {
             throw new EvyoogException("DUPLICATE_EVENT_ID",
                     "A batch with event_id '" + request.eventId() + "' has already been processed.");
@@ -118,7 +126,7 @@ public class AiePipelineService {
                 .map(l -> toInterfaceLine(l, batch))
                 .collect(Collectors.toList()));
 
-        return runPipeline(batch, lines, request);
+        return runPipeline(batch, lines, request, journalSourceCode, journalCategoryCode);
     }
 
     @Transactional
@@ -166,7 +174,8 @@ public class AiePipelineService {
 
     // ── pipeline ─────────────────────────────────────────────────────────────
 
-    private AieImportResponse runPipeline(InterfaceBatch batch, List<InterfaceLine> lines, AieImportRequest request) {
+    private AieImportResponse runPipeline(InterfaceBatch batch, List<InterfaceLine> lines, AieImportRequest request,
+                                           String journalSourceCode, String journalCategoryCode) {
         batch.setStatus("VALIDATING");
         batchRepository.save(batch);
 
@@ -197,12 +206,12 @@ public class AiePipelineService {
         JournalSource source;
         JournalCategory category;
         try {
-            source = journalSourceRepository.findByCode(IMPORT_CODE)
+            source = journalSourceRepository.findByCode(journalSourceCode)
                     .orElseThrow(() -> new EvyoogException("IMPORT_SOURCE_NOT_CONFIGURED",
-                            "No '" + IMPORT_CODE + "' Journal Source configured."));
-            category = journalCategoryRepository.findByCode(IMPORT_CODE)
+                            "No '" + journalSourceCode + "' Journal Source configured."));
+            category = journalCategoryRepository.findByCode(journalCategoryCode)
                     .orElseThrow(() -> new EvyoogException("IMPORT_CATEGORY_NOT_CONFIGURED",
-                            "No '" + IMPORT_CODE + "' Journal Category configured."));
+                            "No '" + journalCategoryCode + "' Journal Category configured."));
         } catch (EvyoogException ex) {
             return fail(batch, List.of(buildError(batch, null, ex.getCode(), ex.getMessage(), "POST", null)));
         }

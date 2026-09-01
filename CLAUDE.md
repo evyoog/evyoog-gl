@@ -1602,3 +1602,85 @@ V31 migration: add missing WHO columns to 6 tables above
 - DimensionType enum has single CUSTOM (not CUSTOM_1..CUSTOM_7)
 - Falls back to legacy 12-col layout when no COA Structure configured
 - Test count: 471 unit tests
+
+## Opening Balance Import (August 2026 — no schema change)
+- New package `com.evyoog.gl.aie.openingbalance` (api/service/dto), reusing
+  the GL-16/GL-17 AIE pipeline for posting rather than duplicating dedup/
+  validation/enrichment logic. No new migration — next free is still V32.
+- **`AiePipelineService.ingest()` gained a source/category-aware overload**
+  (`ingest(request, journalSourceCode, journalCategoryCode)`) — the original
+  1-arg `ingest(request)` now just delegates with the existing hardcoded
+  `"IMPORT"`/`"IMPORT"`, so every pre-existing caller (`ExcelImportController`,
+  `resubmit()`) is unaffected. This was necessary because `AiePipelineService`
+  had **no way to post under any Journal Source/Category other than
+  IMPORT/IMPORT** — reusing it unmodified would have silently ignored the
+  build prompt's requirement to post Opening Balance journals distinctly.
+  Same "gained an N-arg overload, original delegates unchanged" precedent
+  already used by `TrialBalanceService.generate(...)` (GL-26).
+- **Journal Category corrected from the build prompt's `ACCRUAL` to the
+  already-seeded `OPENING`** (`gl.journal_category` row `('OPENING',
+  'Opening Balance')`, seeded since V9 — verified via
+  `grep -n "INSERT INTO gl.journal_category" src/main/resources/db/migration/*.sql`
+  before assuming any code). `ACCRUAL` would have worked (it also exists) but
+  is semantically wrong for this capability; `OPENING` is an exact, pre-existing
+  match. `journalSourceCode` stays `MANUAL` as the prompt specified — Opening
+  Balance uploads are manually prepared by the user during migration, and
+  `MANUAL` (like `IMPORT`) has `requires_approval = FALSE`, so no approval-flow
+  behaviour changed by switching off `IMPORT`.
+- `sourceSystem = "OPENING_BALANCE"` (on `AieImportRequest`/`InterfaceBatch`)
+  is a separate concept from `journalSourceCode`/`journalCategoryCode` (which
+  set `JournalHeader.journal_source_id`/`journal_category_id`) — both were
+  implemented, they just aren't the same field the build prompt's notes 4 and
+  "Import logic" pseudocode conflated.
+- **Template**: `GET /opening-balances/template?ledgerId={id}` — columns are
+  `accountCode` + one column per **non-NATURAL_ACCOUNT** dimension on the
+  Ledger's COA Structure (via `FinanceDimension.getCode()`, same convention as
+  GL-17's dynamic template) + `balance` + `description`. No `eventId`/
+  `lineNumber`/DR-CR split columns — this template is deliberately simpler
+  than the AIE journal-import template per the build prompt's spec. Falls
+  back to an empty dimension list (just `accountCode`/`balance`/`description`)
+  when the Ledger has no COA Structure, mirroring `ExcelParserService`'s
+  fallback pattern.
+- **DR/CR auto-classification** reads each account's `DimensionValue
+  .normalBalance` (`DR`/`CR` enum, not `accountQualifier` directly, though
+  `accountQualifier` is echoed in the preview response for display) — an
+  account with `normalBalance` unset is treated as a line-level validation
+  error (`"Account has no normal balance configured"`), not a silent default.
+- **No auto-balancing, per spec**: `importBalances()` blocks entirely (0 lines
+  posted, `success=false`) both when any line fails validation
+  (`errorLines > 0`) and, independently, when the valid lines' `totalDr` ≠
+  `totalCr` — neither path calls `AiePipelineService`, verified via
+  `verify(aiePipelineService, never()).ingest(any(), any(), any())` in
+  `testImport_unbalancedFile_returnsError`.
+- **Dimension-value validation beyond the account code** — preview/import
+  also validate every non-natural dimension column's *value* (not just
+  presence) against `DimensionValueRepository
+  .findByFinanceDimensionIdAndCodeAndIsActiveTrue`, one dimension check per
+  populated column, e.g. an unrecognised `COST-CTR` code fails the line the
+  same way an unrecognised `accountCode` does. This goes slightly beyond the
+  build prompt's explicit test list but costs nothing extra (same repository
+  call already needed for the account lookup) and prevents an
+  otherwise-"valid" preview from failing later inside the Posting Engine with
+  a less specific error.
+- **`OpeningBalancePreviewLine` only exposes `costCentreCode`/`productCode`**
+  (fixed fields, matching the build prompt's DTO shape) even though a COA
+  Structure can carry other dimension types (`PROFIT_CENTRE`, `PROJECT`,
+  `CUSTOM`, `INTERCOMPANY`). The internal parse step keeps the *full*
+  dimension map per line regardless (keyed by `DimensionType.name()`, same
+  convention as `ExcelParserService`) and that full map — not just the two
+  DTO fields — is what actually gets built into each posted line's
+  `accountCombination`, so posting is correct for any dimension mix; only the
+  preview response's per-line display is limited to the two named columns.
+  Flagging this as a DTO-shape limitation for whoever extends the preview UI
+  to arbitrary dimension counts.
+- No period-open or Legal-Entity-authorisation check was added to `preview()`
+  — per the existing GL-12 rule, the period gate lives solely inside
+  `PostingEngine.postThick()`/`postThin()`; duplicating it in a dry-run
+  preview would violate that rule for no benefit (import still routes through
+  the real Posting Engine via the pipeline).
+- Permission: `gl:journal:create` (existing, no new migration) on all three
+  endpoints, matching the build prompt exactly.
+- Test count: 481 unit tests (471 prior + 10 new
+  `OpeningBalanceServiceTest`), `mvn test -DskipITs` green. ITs skipped per
+  the established GL-29/GL-30/V30a/V31 Codespace-resource-constraint
+  precedent.
