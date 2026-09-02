@@ -128,7 +128,7 @@ public class ChartOfAccountsService {
         }
 
         UpdateDimensionValueRequest dvRequest = new UpdateDimensionValueRequest(
-                request.name(), request.description(), request.isSummary(), isPostable,
+                request.name(), request.description(), null, request.isSummary(), isPostable,
                 request.gstApplicable(), request.tdsApplicable(), request.tdsSection(), request.displayOrder(), null,
                 request.counterpartyLegalEntityId(), request.ccManagerName(), request.ccManagerEmail(),
                 request.ccDepartment(), request.validFrom(), request.validTo(), request.budgetControlled());

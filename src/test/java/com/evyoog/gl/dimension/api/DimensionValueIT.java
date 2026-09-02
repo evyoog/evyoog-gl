@@ -17,6 +17,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -95,6 +96,71 @@ class DimensionValueIT {
         createValue(naturalAccountId, "2000-" + suffix, "Payables", rootId, "LIABILITY")
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("QUALIFIER_MISMATCH"));
+    }
+
+    @Test
+    void updateParent_toOwnDescendant_returns400CircularReference() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        UUID ledgerId = createLedger("LDG-" + suffix, "THICK");
+        UUID naturalAccountId = createDimension(ledgerId, "NA-" + suffix, "Natural Account", "NATURAL_ACCOUNT");
+
+        String rootResponse = createValue(naturalAccountId, "1000-" + suffix, "Assets", null, "ASSET")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        UUID rootId = UUID.fromString(objectMapper.readTree(rootResponse).at("/data/id").asText());
+
+        String childResponse = createValue(naturalAccountId, "1100-" + suffix, "Cash", rootId, "ASSET")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        UUID childId = UUID.fromString(objectMapper.readTree(childResponse).at("/data/id").asText());
+
+        // Reparenting the root under its own child would close the loop root -> child -> root.
+        mockMvc.perform(patch("/api/v1/gl/dimension-values/{id}", rootId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("parentValueId", childId.toString()))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("CIRCULAR_REFERENCE"));
+    }
+
+    @Test
+    void updateParent_toSelf_returns400CircularReference() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        UUID ledgerId = createLedger("LDG-" + suffix, "THICK");
+        UUID naturalAccountId = createDimension(ledgerId, "NA-" + suffix, "Natural Account", "NATURAL_ACCOUNT");
+
+        String rootResponse = createValue(naturalAccountId, "1000-" + suffix, "Assets", null, "ASSET")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        UUID rootId = UUID.fromString(objectMapper.readTree(rootResponse).at("/data/id").asText());
+
+        mockMvc.perform(patch("/api/v1/gl/dimension-values/{id}", rootId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("parentValueId", rootId.toString()))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("CIRCULAR_REFERENCE"));
+    }
+
+    @Test
+    void updateParent_toUnrelatedValidAccount_succeeds() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        UUID ledgerId = createLedger("LDG-" + suffix, "THICK");
+        UUID naturalAccountId = createDimension(ledgerId, "NA-" + suffix, "Natural Account", "NATURAL_ACCOUNT");
+
+        String newRootResponse = createValue(naturalAccountId, "1500-" + suffix, "Other Assets", null, "ASSET")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        UUID newRootId = UUID.fromString(objectMapper.readTree(newRootResponse).at("/data/id").asText());
+
+        String childResponse = createValue(naturalAccountId, "1100-" + suffix, "Cash", null, "ASSET")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        UUID childId = UUID.fromString(objectMapper.readTree(childResponse).at("/data/id").asText());
+
+        mockMvc.perform(patch("/api/v1/gl/dimension-values/{id}", childId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("parentValueId", newRootId.toString()))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.parentValueId").value(newRootId.toString()));
     }
 
     private org.springframework.test.web.servlet.ResultActions createValue(

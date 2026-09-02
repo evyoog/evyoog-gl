@@ -1714,3 +1714,83 @@ V31 migration: add missing WHO columns to 6 tables above
 - ledgerId provided → returns single calendar for that ledger
 - getAll() was added to service this session (was missing), then exposed in controller
 - Next migration: V32
+
+## Hierarchical Financial Reporting (September 2026 — no schema change, V32 still next)
+- **Phase 2 (P&L/Balance Sheet children[] population) was already fully
+  built** — the build prompt's premise ("P&L/BS return flat lists,
+  children[] always empty") is stale. `ProfitAndLossService.buildHierarchy()`
+  and `BalanceSheetService.buildHierarchy()` (GL-23/GL-24, see git log
+  `42b5ae8`/`4a89e47`) already recurse, roll summary nodes up from their
+  children, and have passing hierarchy-rollup tests in both the unit suites
+  and `ProfitAndLossIT`/`BalanceSheetIT`. Nothing was changed there — verified
+  by re-running those suites, not just reading the code.
+- **Phase 1 — new `GET /api/v1/gl/reports/hierarchical-trial-balance`**
+  (`legalEntityId`, `periodId` required; `unitCode`, `costCentreCode`
+  optional), package `com.evyoog.gl.reporting.trialbalance` (same package as
+  the flat Trial Balance — new `HierarchicalTrialBalanceService` +
+  `HierarchicalTrialBalanceLine`/`HierarchicalTrialBalanceResponse` DTOs,
+  endpoint added to the existing `TrialBalanceController`). Reuses
+  `gl:trial-balance:view` — no new permission. Filtering reuses the GL-26
+  `findByLegalEntityIdAndAccountingPeriodIdAndCombinationFilter` JSONB `@>`
+  native query; `unitCode` maps to a `"UNIT"` JSONB key even though no
+  `DimensionType.UNIT` exists — this is a pure combination-filter key
+  (works like the existing `COST_CENTRE`/`PRODUCT` filter keys), not a
+  dimension-type lookup, so it costs nothing to support even though nothing
+  in this codebase tags journal lines with `"UNIT"` today.
+- **Ending-balance sign — deliberately did not follow the build prompt's
+  pseudocode.** Its `buildLine()` example inferred DR/CR bucket from
+  `endingBalance.compareTo(ZERO) > 0`, which mis-buckets any account whose
+  running balance has gone negative (e.g. a contra account, or a CR-normal
+  account that happens to be overdrawn this period). Used the same
+  sign-correct approach already proven in `TrialBalanceService
+  .toTrialBalanceLine()` instead: bucket by the account's own
+  `normalBalance` (DR → `endingBalance` as-is, CR → `endingBalance.abs()`),
+  never by the sign of the number itself.
+- **Grand totals sum only leaf nodes** (`flattenLeaves()`), not every node —
+  summing summary/rollup nodes too would double-count every leaf they
+  aggregate. `totalAccounts`/`accountsWithActivity` do flatten *all* nodes
+  (`flattenAll()`) since those two counts are about the full tree, not a
+  balance total.
+- **Circular Reference Validation (Phase 3) exposed a real, pre-existing gap**:
+  `UpdateDimensionValueRequest` had no `parentValueId` field at all — there
+  was previously no way to *change* an existing Dimension Value's parent via
+  the API (only set one at creation). Added `UUID parentValueId` to that
+  record (inserted after `description`, matching where it sits on the entity —
+  the one call site building it positionally,
+  `ChartOfAccountsService.updateAccount()`, was updated in lockstep with an
+  extra `null`). `DimensionValueService.update()` now validates the new
+  parent (existence + `QUALIFIER_MISMATCH`, mirroring `create()`'s existing
+  rule) and calls `validateNoCircularReference(entity.getId(),
+  request.parentValueId())` before assigning it.
+- **`validateNoCircularReference` is only reachable from `update()`, not
+  `create()` — and this is correct, not a shortcut.** `AuditableEntity.id`
+  uses `@GeneratedValue(strategy = GenerationType.UUID)`; Hibernate assigns
+  that UUID during `persist()`/`saveAndFlush()`, which happens *after* our
+  own pre-save validation runs. A brand-new `DimensionValue` therefore has no
+  `id` yet at the point `create()` would need to check for self-reference,
+  and `parentValueId` in `CreateDimensionValueRequest` can only ever
+  reference an *already-existing* row — so a new value being (or containing)
+  its own ancestor is structurally impossible through the public API, not
+  merely untested. `create()` was left unchanged; only `update()` calls the
+  guard. Confirmed live against the real dev DB: PATCHing a value's
+  `parentValueId` to create a genuine 2-node cycle (A→B, then B→A) returns
+  `400 CIRCULAR_REFERENCE`; a normal reparent to an unrelated account
+  succeeds.
+- Verified three ways, not just unit tests: (1) 7 new
+  `HierarchicalTrialBalanceServiceTest` unit tests, 3 new
+  `DimensionValueServiceTest` update()/circular-reference unit tests: (2) 2
+  new `TrialBalanceIT` Testcontainers tests (flat-accounts and a real
+  2-level summary/leaf rollup posted through `PostingEngine`) + 3 new
+  `DimensionValueIT` Testcontainers tests (self-parent, real 2-node cycle,
+  valid reparent) — all against real Postgres, all green; (3) a live smoke
+  test against the running dev server and the actual Orbinox demo DB
+  (`docker exec evyoog-postgres ...` + a real JWT), confirming the flat
+  Orbinox hierarchy (`totalAccounts=25`, every line `depth=0` and
+  `children=[]`) and totals matching the existing flat Trial Balance exactly
+  (₹3,46,00,000 DR = CR), plus the circular-reference guard rejecting a real
+  attempted cycle on live data — the test mutation was reverted immediately
+  after (`UPDATE gl.dimension_value SET parent_value_id = NULL ...`) so the
+  demo data's documented flat state is unchanged.
+- Test count: 425 unit tests (`mvn test -DskipITs` green) + 13 integration
+  tests across `DimensionValueIT` (6, was 3) and `TrialBalanceIT` (7, was 5).
+- Next migration remains V32 — this capability made no schema changes.

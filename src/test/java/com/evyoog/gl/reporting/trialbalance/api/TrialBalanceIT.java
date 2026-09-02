@@ -170,6 +170,65 @@ class TrialBalanceIT {
         assertThat(codes).isEqualTo(sorted);
     }
 
+    @Test
+    void testHierarchicalTrialBalance_flatAccounts_returnsAllAsRootsWithZeroDepth() throws Exception {
+        Fixture fx = buildFixture();
+        openPeriod(fx, fx.periodId);
+
+        postingEngine.post(multiLineRequest(fx,
+                line(fx.arAccountId, "100.00", null),
+                line(fx.salesAccountId, null, "100.00")));
+
+        String response = mockMvc.perform(get("/api/v1/gl/reports/hierarchical-trial-balance")
+                        .param("legalEntityId", fx.legalEntityId.toString())
+                        .param("periodId", fx.periodId.toString()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        var data = objectMapper.readTree(response).at("/data");
+        assertThat(data.get("isBalanced").asBoolean()).isTrue();
+        for (var node : data.get("lines")) {
+            assertThat(node.get("depth").asInt()).isEqualTo(0);
+            assertThat(node.get("children")).isEmpty();
+        }
+    }
+
+    @Test
+    void testHierarchicalTrialBalance_hierarchyRollup_summaryEqualsChildSum() throws Exception {
+        Fixture fx = buildFixture();
+        openPeriod(fx, fx.periodId);
+
+        UUID naturalAcctDimId = fx.naturalAcctDimId;
+        String suffix = UUID.randomUUID().toString().substring(0, 6);
+        UUID summaryId = createDimensionValue(naturalAcctDimId, "1SUM-" + suffix, "ASSET", "DR", null, true, false);
+        UUID childId = createDimensionValue(naturalAcctDimId, "1CHD-" + suffix, "ASSET", "DR", summaryId, false, true);
+
+        postingEngine.post(multiLineRequest(fx,
+                line(childId, "75.00", null),
+                line(fx.salesAccountId, null, "75.00")));
+
+        String response = mockMvc.perform(get("/api/v1/gl/reports/hierarchical-trial-balance")
+                        .param("legalEntityId", fx.legalEntityId.toString())
+                        .param("periodId", fx.periodId.toString()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        var data = objectMapper.readTree(response).at("/data");
+        com.fasterxml.jackson.databind.JsonNode summaryNode = null;
+        for (var node : data.get("lines")) {
+            if (node.get("accountCode").asText().equals("1SUM-" + suffix)) {
+                summaryNode = node;
+            }
+        }
+        assertThat(summaryNode).isNotNull();
+        assertThat(summaryNode.get("depth").asInt()).isEqualTo(0);
+        assertThat(summaryNode.get("debitBalance").decimalValue()).isEqualByComparingTo("75.00");
+        assertThat(summaryNode.get("children")).hasSize(1);
+        var childNode = summaryNode.get("children").get(0);
+        assertThat(childNode.get("depth").asInt()).isEqualTo(1);
+        assertThat(childNode.get("debitBalance").decimalValue()).isEqualByComparingTo("75.00");
+    }
+
     private PostingLineRequest line(UUID accountId, String debit, String credit) {
         return PostingLineRequest.builder()
                 .naturalAccountValueId(accountId)
@@ -235,7 +294,7 @@ class TrialBalanceIT {
         UUID journalSourceId = journalSourceRepository.findByCode("MANUAL").orElseThrow().getId();
         UUID journalCategoryId = journalCategoryRepository.findByCode("ADJUSTMENT").orElseThrow().getId();
 
-        return new Fixture(legalEntityId, periodIds.get(0),
+        return new Fixture(legalEntityId, periodIds.get(0), naturalAcctDimId,
                 arId, arCode, salesId, salesCode, gstPayableId, gstPayableCode,
                 expenseId, expenseCode, payableId, payableCode,
                 journalSourceId, journalCategoryId);
@@ -286,14 +345,23 @@ class TrialBalanceIT {
 
     private UUID createDimensionValue(UUID financeDimensionId, String code, String accountQualifier,
                                        String normalBalance) throws Exception {
+        return createDimensionValue(financeDimensionId, code, accountQualifier, normalBalance, null, false, true);
+    }
+
+    private UUID createDimensionValue(UUID financeDimensionId, String code, String accountQualifier,
+                                       String normalBalance, UUID parentValueId, boolean isSummary,
+                                       boolean isPostable) throws Exception {
         Map<String, Object> request = new HashMap<>();
         request.put("financeDimensionId", financeDimensionId.toString());
         request.put("code", code);
         request.put("name", "Account " + code);
         request.put("accountQualifier", accountQualifier);
         request.put("normalBalance", normalBalance);
-        request.put("isSummary", false);
-        request.put("isPostable", true);
+        request.put("isSummary", isSummary);
+        request.put("isPostable", isPostable);
+        if (parentValueId != null) {
+            request.put("parentValueId", parentValueId.toString());
+        }
 
         String response = mockMvc.perform(post("/api/v1/gl/dimension-values")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -382,6 +450,7 @@ class TrialBalanceIT {
     private static final class Fixture {
         final UUID legalEntityId;
         final UUID periodId;
+        final UUID naturalAcctDimId;
         final UUID arAccountId;
         final String arAccountCode;
         final UUID salesAccountId;
@@ -395,7 +464,7 @@ class TrialBalanceIT {
         final UUID journalSourceId;
         final UUID journalCategoryId;
 
-        Fixture(UUID legalEntityId, UUID periodId,
+        Fixture(UUID legalEntityId, UUID periodId, UUID naturalAcctDimId,
                 UUID arAccountId, String arAccountCode,
                 UUID salesAccountId, String salesAccountCode,
                 UUID gstPayableAccountId, String gstPayableAccountCode,
@@ -404,6 +473,7 @@ class TrialBalanceIT {
                 UUID journalSourceId, UUID journalCategoryId) {
             this.legalEntityId = legalEntityId;
             this.periodId = periodId;
+            this.naturalAcctDimId = naturalAcctDimId;
             this.arAccountId = arAccountId;
             this.arAccountCode = arAccountCode;
             this.salesAccountId = salesAccountId;

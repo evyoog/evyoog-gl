@@ -21,12 +21,16 @@ import com.evyoog.gl.enterprise.domain.LegalEntity;
 import com.evyoog.gl.enterprise.repository.LegalEntityRepository;
 import com.evyoog.gl.ledger.repository.LegalEntityLedgerRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -125,6 +129,17 @@ public class DimensionValueService {
                 request.validTo() != null ? request.validTo() : entity.getValidTo());
 
         mapper.updateFromRequest(request, entity);
+        if (request.parentValueId() != null) {
+            validateNoCircularReference(entity.getId(), request.parentValueId());
+            DimensionValue newParent = repository.findById(request.parentValueId())
+                    .orElseThrow(() -> new ResourceNotFoundException("DimensionValue", request.parentValueId()));
+            if (entity.getAccountQualifier() != null && newParent.getAccountQualifier() != entity.getAccountQualifier()) {
+                throw new EvyoogException("QUALIFIER_MISMATCH",
+                        "A child account's qualifier must match its parent. "
+                                + "Assets roll up to Assets, Expenses roll up to Expenses, etc.");
+            }
+            entity.setParentValue(newParent);
+        }
         if (request.isSummary() != null) {
             entity.setSummary(request.isSummary());
         }
@@ -260,6 +275,41 @@ public class DimensionValueService {
 
     private NormalBalance deriveNormalBalance(AccountQualifier qualifier) {
         return qualifier == null ? null : DEFAULT_NORMAL_BALANCE.get(qualifier);
+    }
+
+    // Only reachable from update() — a new entity's id doesn't exist yet at create()
+    // time (GenerationType.UUID assigns it during the save, after this check would
+    // run), so a brand-new value can never already appear in an existing ancestor
+    // chain. accountId is null-safe here only for that reason, not general use.
+    private void validateNoCircularReference(UUID accountId, UUID proposedParentId) {
+        if (proposedParentId == null) {
+            return;
+        }
+        if (proposedParentId.equals(accountId)) {
+            throw new EvyoogException("CIRCULAR_REFERENCE",
+                    "An account cannot be its own parent.",
+                    HttpStatus.BAD_REQUEST);
+        }
+
+        UUID current = proposedParentId;
+        Set<UUID> visited = new HashSet<>();
+        while (current != null) {
+            if (!visited.add(current)) {
+                break;
+            }
+            DimensionValue ancestor = repository.findById(current).orElse(null);
+            if (ancestor == null) {
+                break;
+            }
+            UUID ancestorsParentId = ancestor.getParentValue() != null ? ancestor.getParentValue().getId() : null;
+            if (Objects.equals(accountId, ancestorsParentId)) {
+                throw new EvyoogException("CIRCULAR_REFERENCE",
+                        "Cannot set this account as parent — it would create a circular reference. "
+                                + "Account hierarchies must be acyclic trees.",
+                        HttpStatus.BAD_REQUEST);
+            }
+            current = ancestorsParentId;
+        }
     }
 
     private DimensionValue findOrThrow(UUID id) {

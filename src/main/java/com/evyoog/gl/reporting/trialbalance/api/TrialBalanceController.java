@@ -1,7 +1,9 @@
 package com.evyoog.gl.reporting.trialbalance.api;
 
 import com.evyoog.gl.common.response.ApiResponse;
+import com.evyoog.gl.reporting.trialbalance.dto.HierarchicalTrialBalanceResponse;
 import com.evyoog.gl.reporting.trialbalance.dto.TrialBalanceResponse;
+import com.evyoog.gl.reporting.trialbalance.service.HierarchicalTrialBalanceService;
 import com.evyoog.gl.reporting.trialbalance.service.TrialBalanceService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -19,6 +21,7 @@ import java.util.UUID;
 public class TrialBalanceController {
 
     private final TrialBalanceService trialBalanceService;
+    private final HierarchicalTrialBalanceService hierarchicalTrialBalanceService;
 
     @GetMapping("/api/v1/gl/reports/trial-balance")
     @PreAuthorize("hasAuthority('gl:trial-balance:view')")
@@ -45,5 +48,18 @@ public class TrialBalanceController {
                 "Export format '" + format + "' is not yet implemented — returning structured JSON. "
                         + "PDF/Excel generation is planned for Phase 2.",
                 null);
+    }
+
+    @GetMapping("/api/v1/gl/reports/hierarchical-trial-balance")
+    @PreAuthorize("hasAuthority('gl:trial-balance:view')")
+    @Operation(summary = "Generate a hierarchical (parent-child) Trial Balance with expand/collapse "
+            + "drill-down support, optionally filtered by Unit and/or Cost Centre segment")
+    public ApiResponse<HierarchicalTrialBalanceResponse> getHierarchicalTrialBalance(
+            @RequestParam UUID legalEntityId,
+            @RequestParam UUID periodId,
+            @RequestParam(required = false) String unitCode,
+            @RequestParam(required = false) String costCentreCode) {
+        return ApiResponse.ok(hierarchicalTrialBalanceService.generate(
+                legalEntityId, periodId, unitCode, costCentreCode));
     }
 }

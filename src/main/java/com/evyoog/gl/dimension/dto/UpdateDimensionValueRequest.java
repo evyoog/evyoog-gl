@@ -13,6 +13,10 @@ public record UpdateDimensionValueRequest(
         @Size(max = 500, message = "description must be at most 500 characters")
         String description,
 
+        // When provided, becomes the account's new parent — validated against
+        // circular reference (an account cannot become its own ancestor).
+        UUID parentValueId,
+
         Boolean isSummary,
 
         Boolean isPostable,

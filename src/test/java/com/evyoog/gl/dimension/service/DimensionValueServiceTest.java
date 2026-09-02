@@ -12,6 +12,7 @@ import com.evyoog.gl.dimension.domain.FinanceDimension;
 import com.evyoog.gl.dimension.domain.NormalBalance;
 import com.evyoog.gl.dimension.dto.CreateDimensionValueRequest;
 import com.evyoog.gl.dimension.dto.DimensionValueResponse;
+import com.evyoog.gl.dimension.dto.UpdateDimensionValueRequest;
 import com.evyoog.gl.dimension.mapper.DimensionValueMapper;
 import com.evyoog.gl.dimension.repository.DimensionValueRepository;
 import com.evyoog.gl.dimension.repository.FinanceDimensionRepository;
@@ -310,6 +311,65 @@ class DimensionValueServiceTest {
 
         assertThat(target.isDefault()).isTrue();
         org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any(DimensionValue.class));
+    }
+
+    private UpdateDimensionValueRequest parentUpdateRequest(UUID parentValueId) {
+        return new UpdateDimensionValueRequest(null, null, parentValueId, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null);
+    }
+
+    @Test
+    void testUpdateDimensionValue_selfParent_throwsCircularReferenceException() {
+        FinanceDimension fd = financeDimension(DimensionType.NATURAL_ACCOUNT);
+        DimensionValue a = DimensionValue.builder().code("1000").name("Assets").financeDimension(fd).build();
+        a.setId(UUID.randomUUID());
+
+        when(repository.findById(a.getId())).thenReturn(Optional.of(a));
+
+        assertThatThrownBy(() -> service.update(a.getId(), parentUpdateRequest(a.getId()), "prashanth"))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "CIRCULAR_REFERENCE");
+    }
+
+    @Test
+    void testUpdateDimensionValue_withCircularParent_throwsCircularReferenceException() {
+        FinanceDimension fd = financeDimension(DimensionType.NATURAL_ACCOUNT);
+        DimensionValue a = DimensionValue.builder().code("1000").name("Assets").financeDimension(fd).build();
+        a.setId(UUID.randomUUID());
+        DimensionValue b = DimensionValue.builder().code("1100").name("Current Assets").financeDimension(fd)
+                .parentValue(a).build();
+        b.setId(UUID.randomUUID());
+        DimensionValue c = DimensionValue.builder().code("1110").name("Bank").financeDimension(fd)
+                .parentValue(b).build();
+        c.setId(UUID.randomUUID());
+
+        when(repository.findById(a.getId())).thenReturn(Optional.of(a));
+        when(repository.findById(b.getId())).thenReturn(Optional.of(b));
+        when(repository.findById(c.getId())).thenReturn(Optional.of(c));
+
+        // Setting C (a's own grandchild) as A's parent would close the loop A -> C -> B -> A.
+        assertThatThrownBy(() -> service.update(a.getId(), parentUpdateRequest(c.getId()), "prashanth"))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "CIRCULAR_REFERENCE");
+    }
+
+    @Test
+    void testUpdateDimensionValue_validParent_succeeds() {
+        FinanceDimension fd = financeDimension(DimensionType.COST_CENTRE);
+        DimensionValue target = DimensionValue.builder().code("CC-SAL").name("Sales").financeDimension(fd).build();
+        target.setId(UUID.randomUUID());
+        DimensionValue newParent = DimensionValue.builder().code("CC-ROOT").name("All Cost Centres")
+                .financeDimension(fd).build();
+        newParent.setId(UUID.randomUUID());
+
+        when(repository.findById(target.getId())).thenReturn(Optional.of(target));
+        when(repository.findById(newParent.getId())).thenReturn(Optional.of(newParent));
+        when(repository.saveAndFlush(target)).thenReturn(target);
+        when(mapper.toResponse(any(DimensionValue.class))).thenAnswer(inv -> responseFor(inv.getArgument(0)));
+
+        service.update(target.getId(), parentUpdateRequest(newParent.getId()), "prashanth");
+
+        assertThat(target.getParentValue()).isEqualTo(newParent);
     }
 
     @Test
