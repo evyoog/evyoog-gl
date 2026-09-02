@@ -1794,3 +1794,16 @@ V31 migration: add missing WHO columns to 6 tables above
 - Test count: 425 unit tests (`mvn test -DskipITs` green) + 13 integration
   tests across `DimensionValueIT` (6, was 3) and `TrialBalanceIT` (7, was 5).
 - Next migration remains V32 — this capability made no schema changes.
+
+## Hierarchical Financial Reporting (September 2026)
+- GET /api/v1/gl/reports/hierarchical-trial-balance — new endpoint
+  Query params: legalEntityId, periodId, unitCode?, costCentreCode?
+  Returns recursive tree: HierarchicalTrialBalanceLine with children[]
+  Rollup: leaf balances aggregated up to summary nodes
+  JSONB filter: account_combination @> {"UNIT":"CBE-1"} for unit drill-down
+  Sign correction: reused TrialBalanceService proven DR/CR bucketing
+- P&L + Balance Sheet children[]: already implemented in GL-23/GL-24 — no changes
+- Circular reference validation: added to DimensionValueService.update()
+  NOT on create() — new entity ID doesn't exist at validation time
+  parentValueId added to UpdateDimensionValueRequest (previously missing)
+- Test count: 425 unit + 13 IT tests
