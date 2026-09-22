@@ -1807,3 +1807,51 @@ V31 migration: add missing WHO columns to 6 tables above
   NOT on create() — new entity ID doesn't exist at validation time
   parentValueId added to UpdateDimensionValueRequest (previously missing)
 - Test count: 425 unit + 13 IT tests
+
+## Known Design Debt — Technical Decisions Log (September 2026)
+
+### DEBT-01: DimensionType collision — UNIT uses PROFIT_CENTRE (workaround)
+- **Date:** September 2026
+- **Context:** Unicon Engineers has 6 COA dimensions including UNIT (Business Unit)
+  and FUTURE (placeholder). Both were configured as CUSTOM type.
+- **Problem:** account_combination JSONB uses DimensionType.name() as key.
+  Two CUSTOM dimensions silently overwrite each other in the JSONB.
+- **Immediate fix (V32):** FinanceDimensionService now rejects duplicate
+  DimensionType on same ledger (DUPLICATE_DIMENSION_TYPE, 409).
+- **Demo workaround:** UNIT dimension changed from CUSTOM → PROFIT_CENTRE
+  to avoid type collision. Semantically acceptable (BU = Profit Centre)
+  but architecturally a workaround.
+- **Correct short-term fix (TODO — Phase 1 stabilisation):**
+  Add SPARE (or CUSTOM_2) to DimensionType enum. UNIT stays CUSTOM,
+  FUTURE becomes SPARE. No breaking changes.
+- **Correct long-term fix (TODO — Phase 2):**
+  Migrate account_combination JSONB keys from DimensionType.name()
+  to dimension.code. Eliminates the constraint entirely.
+  BREAKING CHANGE — impacts PostingEngine, AccountCombinationService,
+  TrialBalance, SegmentReporting, HierarchicalTrialBalance, AIE parser,
+  OB parser, GIN indexes, journal_line + account_balance backfill.
+  Estimated effort: 3 days + comprehensive testing.
+- **Impact if not fixed:** Any customer needing 2+ CUSTOM dimensions
+  (e.g. two user-defined segments) will hit this bug.
+
+### DEBT-02: GSTIN uniqueness removed at DB level (V32)
+- **Date:** September 2026
+- **Context:** CBE-1 and CBE-2 (Unicon) share the same Tamil Nadu GSTIN.
+- **Problem:** business_unit_gstin_key unique constraint prevented same
+  GSTIN across BUs even under the same LE.
+- **Fix:** V32 migration drops the constraint. Service-level check now
+  validates GSTIN uniqueness across different Legal Entities only.
+- **Risk:** No eVyoog-level GSTIN uniqueness within same LE. Relies on
+  Indian GST system for enforcement. Acceptable for production.
+
+### DEBT-03: account_combination JSONB key = DimensionType.name() (CRITICAL)
+- **Date:** September 2026 (identified, not yet fixed)
+- **Root cause:** All GL core services use DimensionType.name() as the
+  JSONB key in account_combination. This works only when every dimension
+  has a unique DimensionType.
+- **Affected:** PostingEngine (Rule 10, 11), AccountCombinationService,
+  TrialBalanceService, SegmentReportingService, HierarchicalTrialBalance,
+  AIE ExcelParserService, OB OpeningBalanceService, GIN indexes.
+- **TODO Phase 2:** Migrate to dimension.code as JSONB key.
+  Requires V33+ migration to backfill journal_line.account_combination
+  and account_balance.account_combination across all existing data.
