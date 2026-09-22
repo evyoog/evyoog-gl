@@ -77,6 +77,22 @@ public class FinanceDimensionService {
                     "A Ledger may have exactly one NATURAL_ACCOUNT Finance Dimension.");
         }
 
+        // account_combination's JSONB key is the DimensionType enum name, not the
+        // Finance Dimension's code (see CLAUDE.md — CRITICAL, load-bearing across
+        // PostingEngine/AccountCombinationService/TrialBalance/Segment Reporting).
+        // Two active dimensions of the same type on one Ledger would silently
+        // collide on that shared key (e.g. two CUSTOM dimensions, or two
+        // COST_CENTRE dimensions), so it's rejected here rather than left to
+        // corrupt postings/imports downstream. LEGAL_ENTITY/NATURAL_ACCOUNT already
+        // have their own dedicated checks above with more specific error codes.
+        if (request.dimensionType() != DimensionType.LEGAL_ENTITY
+                && request.dimensionType() != DimensionType.NATURAL_ACCOUNT
+                && repository.existsByLedgerIdAndDimensionTypeAndIsActiveTrue(ledger.getId(), request.dimensionType())) {
+            throw new EvyoogException("DUPLICATE_DIMENSION_TYPE",
+                    "A Ledger may have only one active Finance Dimension of type "
+                            + request.dimensionType() + ".");
+        }
+
         boolean isBalancing = request.isBalancing() != null && request.isBalancing();
         validateBalancingConfig(isBalancing, request.balancingSequence());
         UUID coaStructureId = ledger.getCoaStructure() != null ? ledger.getCoaStructure().getId() : null;

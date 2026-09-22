@@ -167,6 +167,60 @@ class FinanceDimensionServiceTest {
     }
 
     @Test
+    void createDimension_duplicateCustomType_shouldThrow409() {
+        // account_combination's JSONB key is the DimensionType enum name, so two
+        // active CUSTOM dimensions on one Ledger (e.g. UNIT + FUTURE) would collide
+        // on that shared key during Excel import/posting — rejected at config time.
+        Ledger ledger = ledgerWithMode(FinanceMode.THICK);
+        CreateFinanceDimensionRequest request = new CreateFinanceDimensionRequest(
+                ledger.getId(), "FUTURE", "Future Segment", null, DimensionType.CUSTOM, null, null, null, null);
+
+        when(ledgerRepository.findById(ledger.getId())).thenReturn(Optional.of(ledger));
+        when(repository.existsByLedgerIdAndCode(ledger.getId(), "FUTURE")).thenReturn(false);
+        when(repository.countByLedgerIdAndIsActiveTrue(ledger.getId())).thenReturn(1L);
+        when(repository.existsByLedgerIdAndDimensionTypeAndIsActiveTrue(ledger.getId(), DimensionType.CUSTOM))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> service.create(request, "prashanth"))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "DUPLICATE_DIMENSION_TYPE");
+    }
+
+    @Test
+    void createDimension_sixDistinctDimensionTypes_allSucceed() {
+        // Six dimensions, each a different DimensionType (LEGAL_ENTITY is excluded
+        // here since it's THICK mode and not under test) — none should collide
+        // since every type is unique within the Ledger.
+        Ledger ledger = ledgerWithMode(FinanceMode.THICK);
+        DimensionType[] types = {
+                DimensionType.NATURAL_ACCOUNT, DimensionType.COST_CENTRE, DimensionType.PROFIT_CENTRE,
+                DimensionType.INTERCOMPANY, DimensionType.PRODUCT, DimensionType.PROJECT
+        };
+
+        for (DimensionType type : types) {
+            String code = type.name();
+            CreateFinanceDimensionRequest request = new CreateFinanceDimensionRequest(
+                    ledger.getId(), code, code, null, type, null, null, null, null);
+            FinanceDimension entity = new FinanceDimension();
+            FinanceDimension saved = FinanceDimension.builder().code(code).name(code)
+                    .dimensionType(type).ledger(ledger).build();
+            saved.setId(UUID.randomUUID());
+
+            when(ledgerRepository.findById(ledger.getId())).thenReturn(Optional.of(ledger));
+            when(repository.existsByLedgerIdAndCode(ledger.getId(), code)).thenReturn(false);
+            when(repository.countByLedgerIdAndIsActiveTrue(ledger.getId())).thenReturn(0L);
+            when(repository.existsByLedgerIdAndDimensionTypeAndIsActiveTrue(ledger.getId(), type)).thenReturn(false);
+            when(mapper.toEntity(request)).thenReturn(entity);
+            when(repository.saveAndFlush(entity)).thenReturn(saved);
+            when(mapper.toResponse(saved, 0L)).thenReturn(responseFor(saved, 0L));
+
+            FinanceDimensionResponse result = service.create(request, "prashanth");
+
+            assertThat(result.dimensionType()).isEqualTo(type);
+        }
+    }
+
+    @Test
     void createDimension_maxFifteen_shouldThrow409() {
         Ledger ledger = ledgerWithMode(FinanceMode.THICK);
         CreateFinanceDimensionRequest request = new CreateFinanceDimensionRequest(
