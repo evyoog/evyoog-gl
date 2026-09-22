@@ -40,9 +40,10 @@ public class BusinessUnitService {
                 .orElseThrow(() -> new ResourceNotFoundException("LegalEntity", request.legalEntityId()));
 
         validateGstin(request.gstin());
-        if (StringUtils.hasText(request.gstin()) && repository.existsByGstin(request.gstin())) {
+        if (StringUtils.hasText(request.gstin())
+                && repository.existsByGstinAndLegalEntityIdNot(request.gstin(), legalEntity.getId())) {
             throw new DuplicateResourceException(
-                    "DUPLICATE_GSTIN", "A business unit with GSTIN '" + request.gstin() + "' already exists.", "gstin");
+                    "DUPLICATE_GSTIN", "A business unit with GSTIN '" + request.gstin() + "' already exists under a different Legal Entity.", "gstin");
         }
         if (repository.existsByLegalEntityIdAndCode(legalEntity.getId(), request.code())) {
             throw new DuplicateResourceException(
@@ -69,9 +70,9 @@ public class BusinessUnitService {
 
         if (StringUtils.hasText(request.gstin()) && !request.gstin().equals(entity.getGstin())) {
             validateGstin(request.gstin());
-            if (repository.existsByGstin(request.gstin())) {
+            if (repository.existsByGstinAndLegalEntityIdNot(request.gstin(), entity.getLegalEntity().getId())) {
                 throw new DuplicateResourceException(
-                        "DUPLICATE_GSTIN", "A business unit with GSTIN '" + request.gstin() + "' already exists.", "gstin");
+                        "DUPLICATE_GSTIN", "A business unit with GSTIN '" + request.gstin() + "' already exists under a different Legal Entity.", "gstin");
             }
         }
 

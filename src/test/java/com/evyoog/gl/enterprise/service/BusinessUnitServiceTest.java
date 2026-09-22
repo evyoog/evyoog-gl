@@ -62,11 +62,39 @@ class BusinessUnitServiceTest {
         CreateBusinessUnitRequest request = new CreateBusinessUnitRequest(legalEntityId, "BU-001", "Coimbatore Plant", gstin, null);
 
         when(legalEntityRepository.findById(legalEntityId)).thenReturn(Optional.of(legalEntity));
-        when(repository.existsByGstin(gstin)).thenReturn(true);
+        when(repository.existsByGstinAndLegalEntityIdNot(gstin, legalEntityId)).thenReturn(true);
 
         assertThatThrownBy(() -> service.create(request, "prashanth"))
                 .isInstanceOf(DuplicateResourceException.class)
                 .hasFieldOrPropertyWithValue("code", "DUPLICATE_GSTIN");
+    }
+
+    @Test
+    void create_whenSameGstinSameLegalEntity_shouldSucceed() {
+        UUID legalEntityId = UUID.randomUUID();
+        LegalEntity legalEntity = new LegalEntity();
+        legalEntity.setId(legalEntityId);
+        String gstin = "33AABCE1234F1Z5";
+        CreateBusinessUnitRequest request = new CreateBusinessUnitRequest(legalEntityId, "BU-002", "Coimbatore Plant 2", gstin, null);
+        BusinessUnit entity = new BusinessUnit();
+        BusinessUnit saved = BusinessUnit.builder().code("BU-002").name("Coimbatore Plant 2").gstin(gstin).stateCode("33").build();
+        saved.setId(UUID.randomUUID());
+        BusinessUnitResponse response = new BusinessUnitResponse(
+                saved.getId(), legalEntityId, "BU-002", "Coimbatore Plant 2", gstin, "33", true, Instant.now(), Instant.now());
+
+        when(legalEntityRepository.findById(legalEntityId)).thenReturn(Optional.of(legalEntity));
+        // Another Business Unit under the SAME Legal Entity already holds this GSTIN — existsByGstinAndLegalEntityIdNot
+        // excludes that LE, so this must return false (no cross-LE conflict).
+        when(repository.existsByGstinAndLegalEntityIdNot(gstin, legalEntityId)).thenReturn(false);
+        when(repository.existsByLegalEntityIdAndCode(legalEntityId, "BU-002")).thenReturn(false);
+        when(mapper.toEntity(request)).thenReturn(entity);
+        when(repository.saveAndFlush(entity)).thenReturn(saved);
+        when(mapper.toResponse(saved)).thenReturn(response);
+
+        BusinessUnitResponse result = service.create(request, "prashanth");
+
+        assertThat(result.gstin()).isEqualTo(gstin);
+        assertThat(result.legalEntityId()).isEqualTo(legalEntityId);
     }
 
     @Test
@@ -83,7 +111,7 @@ class BusinessUnitServiceTest {
                 saved.getId(), legalEntityId, "BU-001", "Coimbatore Plant", gstin, "33", true, Instant.now(), Instant.now());
 
         when(legalEntityRepository.findById(legalEntityId)).thenReturn(Optional.of(legalEntity));
-        when(repository.existsByGstin(gstin)).thenReturn(false);
+        when(repository.existsByGstinAndLegalEntityIdNot(gstin, legalEntityId)).thenReturn(false);
         when(repository.existsByLegalEntityIdAndCode(legalEntityId, "BU-001")).thenReturn(false);
         when(mapper.toEntity(request)).thenReturn(entity);
         when(repository.saveAndFlush(entity)).thenReturn(saved);
