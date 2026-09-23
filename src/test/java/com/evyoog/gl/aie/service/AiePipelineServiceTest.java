@@ -32,7 +32,6 @@ import com.evyoog.gl.posting.dto.PostingResult;
 import com.evyoog.gl.posting.repository.JournalCategoryRepository;
 import com.evyoog.gl.posting.repository.JournalHeaderRepository;
 import com.evyoog.gl.posting.repository.JournalSourceRepository;
-import com.evyoog.gl.posting.service.PostingEngine;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -67,7 +66,7 @@ class AiePipelineServiceTest {
     @Mock private JournalSourceRepository journalSourceRepository;
     @Mock private JournalCategoryRepository journalCategoryRepository;
     @Mock private JournalHeaderRepository journalHeaderRepository;
-    @Mock private PostingEngine postingEngine;
+    @Mock private PostingIsolationService postingIsolationService;
     @Mock private AuditService auditService;
 
     private AiePipelineService service;
@@ -82,7 +81,7 @@ class AiePipelineServiceTest {
         service = new AiePipelineService(batchRepository, lineRepository, errorRepository,
                 deduplicationLogRepository, batchAckLogRepository, legalEntityLedgerRepository,
                 financeDimensionRepository, dimensionValueRepository, journalSourceRepository,
-                journalCategoryRepository, journalHeaderRepository, postingEngine, auditService);
+                journalCategoryRepository, journalHeaderRepository, postingIsolationService, auditService);
 
         legalEntityId = UUID.randomUUID();
         ledgerId = UUID.randomUUID();
@@ -155,13 +154,21 @@ class AiePipelineServiceTest {
         when(journalCategoryRepository.findByCode("IMPORT")).thenReturn(Optional.of(category));
     }
 
+    private void stubOpeningBalanceSourceAndCategory() {
+        JournalSource source = JournalSource.builder().id(UUID.randomUUID()).code("MANUAL").name("Manual")
+                .requiresApproval(false).build();
+        JournalCategory category = JournalCategory.builder().id(UUID.randomUUID()).code("OPENING").name("Opening Balance").build();
+        when(journalSourceRepository.findByCode("MANUAL")).thenReturn(Optional.of(source));
+        when(journalCategoryRepository.findByCode("OPENING")).thenReturn(Optional.of(category));
+    }
+
     @Test
     void testIngest_validBatch_postsJournal() {
         stubLedgerAndAccounts("1000", "4000");
         stubImportSourceAndCategory();
 
         UUID journalHeaderId = UUID.randomUUID();
-        when(postingEngine.post(any(PostingRequest.class)))
+        when(postingIsolationService.postIsolated(any(PostingRequest.class)))
                 .thenReturn(PostingResult.posted(journalHeaderId, "JE-2601-00001", FinanceMode.THICK));
 
         JournalHeader header = JournalHeader.builder().journalNumber("JE-2601-00001").build();
@@ -175,6 +182,57 @@ class AiePipelineServiceTest {
         assertThat(response.journalNumber()).isEqualTo("JE-2601-00001");
         assertThat(response.errorLines()).isZero();
         assertThat(response.validLines()).isEqualTo(2);
+    }
+
+    @Test
+    void testIngest_openingBalanceSourceAndCategory_postsJournal() {
+        // Opening Balance Import (OpeningBalanceService) calls this overload with
+        // journalSourceCode=MANUAL/journalCategoryCode=OPENING instead of the
+        // default IMPORT/IMPORT — verifies that path posts successfully end to
+        // end through PostingIsolationService, the fix for the
+        // UnexpectedRollbackException regression where a posting failure used
+        // to mark the whole batch-tracking transaction rollback-only.
+        stubLedgerAndAccounts("1100", "3100");
+        stubOpeningBalanceSourceAndCategory();
+
+        UUID journalHeaderId = UUID.randomUUID();
+        when(postingIsolationService.postIsolated(any(PostingRequest.class)))
+                .thenReturn(PostingResult.posted(journalHeaderId, "JE-2601-00099", FinanceMode.THICK));
+
+        JournalHeader header = JournalHeader.builder().journalNumber("JE-2601-00099").build();
+        header.setId(journalHeaderId);
+        when(journalHeaderRepository.findById(journalHeaderId)).thenReturn(Optional.of(header));
+
+        AieImportRequest request = new AieImportRequest("OB-1", "OPENING_BALANCE", legalEntityId, ledgerId,
+                accountingPeriodId, null, "Opening Balance Import", "accountant@orbinox.com",
+                balancedRequest("1100", "3100").lines());
+
+        AieImportResponse response = service.ingest(request, "MANUAL", "OPENING");
+
+        assertThat(response.status()).isEqualTo("POSTED");
+        assertThat(response.journalHeaderId()).isEqualTo(journalHeaderId);
+        verify(postingIsolationService).postIsolated(any(PostingRequest.class));
+    }
+
+    @Test
+    void testIngest_postingEngineThrowsEvyoogException_returnsFailedWithoutRethrowing() {
+        // PostingEngine.post() (called via PostingIsolationService) can throw for
+        // business reasons — e.g. BALANCING_SEGMENT_CROSSED, ACCOUNT_NOT_POSTABLE.
+        // The pipeline must catch this and persist a FAILED batch, not let the
+        // exception escape ingest() (which previously surfaced as an unrelated
+        // UnexpectedRollbackException once PostingEngine ran in the same
+        // transaction as this method).
+        stubLedgerAndAccounts("1000", "4000");
+        stubImportSourceAndCategory();
+
+        when(postingIsolationService.postIsolated(any(PostingRequest.class)))
+                .thenThrow(new EvyoogException("BALANCING_SEGMENT_CROSSED", "Journal crosses balancing segment."));
+
+        AieImportResponse response = service.ingest(balancedRequest("1000", "4000"));
+
+        assertThat(response.status()).isEqualTo("FAILED");
+        assertThat(response.errors()).anySatisfy(e -> assertThat(e.errorCode()).isEqualTo("BALANCING_SEGMENT_CROSSED"));
+        verify(batchAckLogRepository).save(any());
     }
 
     @Test
@@ -201,7 +259,7 @@ class AiePipelineServiceTest {
 
         assertThat(response.status()).isEqualTo("FAILED");
         assertThat(response.errors()).anySatisfy(e -> assertThat(e.errorCode()).isEqualTo("UNBALANCED"));
-        verify(postingEngine, never()).post(any());
+        verify(postingIsolationService, never()).postIsolated(any());
     }
 
     @Test
@@ -259,7 +317,7 @@ class AiePipelineServiceTest {
         stubImportSourceAndCategory();
 
         UUID journalHeaderId = UUID.randomUUID();
-        when(postingEngine.post(any(PostingRequest.class)))
+        when(postingIsolationService.postIsolated(any(PostingRequest.class)))
                 .thenReturn(PostingResult.posted(journalHeaderId, "JE-2601-00002", FinanceMode.THICK));
         JournalHeader header = JournalHeader.builder().journalNumber("JE-2601-00002").build();
         header.setId(journalHeaderId);

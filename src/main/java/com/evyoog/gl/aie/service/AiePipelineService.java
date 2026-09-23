@@ -36,8 +36,8 @@ import com.evyoog.gl.posting.dto.PostingResult;
 import com.evyoog.gl.posting.repository.JournalCategoryRepository;
 import com.evyoog.gl.posting.repository.JournalHeaderRepository;
 import com.evyoog.gl.posting.repository.JournalSourceRepository;
-import com.evyoog.gl.posting.service.PostingEngine;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -68,6 +68,7 @@ import java.util.stream.Collectors;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AiePipelineService {
 
     private static final String IMPORT_CODE = "IMPORT";
@@ -83,7 +84,7 @@ public class AiePipelineService {
     private final JournalSourceRepository journalSourceRepository;
     private final JournalCategoryRepository journalCategoryRepository;
     private final JournalHeaderRepository journalHeaderRepository;
-    private final PostingEngine postingEngine;
+    private final PostingIsolationService postingIsolationService;
     private final AuditService auditService;
 
     @Transactional
@@ -220,10 +221,26 @@ public class AiePipelineService {
 
         PostingResult result;
         try {
-            result = postingEngine.post(postingRequest);
+            // Posted in its own transaction (PostingIsolationService, REQUIRES_NEW) —
+            // PostingEngine.post() is itself @Transactional, and calling it directly
+            // from within this method's REQUIRED transaction would mean a posting
+            // failure marks THIS transaction rollback-only, so even though we catch
+            // and recover here, the batch/line saves below would fail to commit with
+            // UnexpectedRollbackException, hiding the real cause. See GL-06's
+            // CoaImportRowService for the identical, already-established pattern.
+            result = postingIsolationService.postIsolated(postingRequest);
         } catch (EvyoogException ex) {
+            log.error("Opening balance/AIE posting failed for batch {} (eventId={}): {}",
+                    batch.getId(), batch.getEventId(), ex.getMessage(), ex);
             AieImportResponse response = fail(batch,
                     List.of(buildError(batch, null, ex.getCode(), ex.getMessage(), "POST", null)));
+            writeAck(batch, null, "GL_FAILED", "FAILED");
+            return response;
+        } catch (RuntimeException ex) {
+            log.error("Opening balance/AIE posting failed unexpectedly for batch {} (eventId={}): {}",
+                    batch.getId(), batch.getEventId(), ex.getMessage(), ex);
+            AieImportResponse response = fail(batch,
+                    List.of(buildError(batch, null, "POSTING_FAILED", ex.getMessage(), "POST", null)));
             writeAck(batch, null, "GL_FAILED", "FAILED");
             return response;
         }
