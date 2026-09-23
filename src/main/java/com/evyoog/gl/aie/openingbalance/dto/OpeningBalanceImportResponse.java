@@ -12,6 +12,8 @@ public record OpeningBalanceImportResponse(
         String journalNumber,
         int totalLines,
         int postedLines,
+        int journalCount,
+        List<OpeningBalanceJournalResult> journals,
         String message,
         List<String> errors
 ) {

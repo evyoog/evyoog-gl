@@ -138,6 +138,39 @@ class OpeningBalanceServiceTest {
         }
     }
 
+    private MockMultipartFile workbookWithUnit(String[][] rows) throws Exception {
+        XSSFWorkbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet("Opening Balances");
+        Row header = sheet.createRow(0);
+        header.createCell(0).setCellValue("accountCode");
+        header.createCell(1).setCellValue("COST-CTR");
+        header.createCell(2).setCellValue("UNIT");
+        header.createCell(3).setCellValue("balance");
+        header.createCell(4).setCellValue("description");
+
+        for (int r = 0; r < rows.length; r++) {
+            Row row = sheet.createRow(r + 1);
+            for (int c = 0; c < rows[r].length; c++) {
+                String value = rows[r][c];
+                if (value == null) {
+                    continue;
+                }
+                if (c == 3) {
+                    row.createCell(c).setCellValue(Double.parseDouble(value));
+                } else {
+                    row.createCell(c).setCellValue(value);
+                }
+            }
+        }
+
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            workbook.write(out);
+            workbook.close();
+            return new MockMultipartFile("file", "opening_balance.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", out.toByteArray());
+        }
+    }
+
     // ── template ─────────────────────────────────────────────────────────────
 
     @Test
@@ -285,6 +318,71 @@ class OpeningBalanceServiceTest {
         assertThat(response.journalHeaderId()).isEqualTo(journalId);
         assertThat(response.postedLines()).isEqualTo(2);
         assertThat(response.totalLines()).isEqualTo(2);
+    }
+
+    @Test
+    void testOBImport_multipleUnits_postsOneJournalPerUnit() throws Exception {
+        // The Ledger's COA Structure has a 2nd balancing segment (UNIT,
+        // isBalancing=true, balancingSequence=2) — 6 lines split across
+        // CBE-1 (3 lines) and CBE-2 (3 lines), each internally balanced.
+        // Posting all 6 as one journal would cross the balancing segment
+        // (PostingEngine Rule 11, BALANCING_SEGMENT_CROSSED) — must instead
+        // post one journal per UNIT value.
+        FinanceDimension unitDim = FinanceDimension.builder()
+                .id(UUID.randomUUID()).code("UNIT").name("Business Unit")
+                .dimensionType(DimensionType.PROFIT_CENTRE).isRequired(false).displayOrder(3)
+                .isBalancing(true).balancingSequence(2).build();
+
+        when(financeDimensionRepository.findByCoaStructureIdAndIsActiveTrueOrderByDisplayOrderAsc(coaStructureId))
+                .thenReturn(List.of(naturalAcctDim, costCentreDim, unitDim));
+        when(financeDimensionRepository.findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(coaStructureId))
+                .thenReturn(List.of(unitDim));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(unitDim.getId(), "CBE-1"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("CBE-1").name("Coimbatore 1").build()));
+        when(dimensionValueRepository.findByFinanceDimensionIdAndCodeAndIsActiveTrue(unitDim.getId(), "CBE-2"))
+                .thenReturn(Optional.of(DimensionValue.builder().id(UUID.randomUUID()).code("CBE-2").name("Coimbatore 2").build()));
+
+        stubAccount("1100", AccountQualifier.ASSET, NormalBalance.DR);
+        stubAccount("3100", AccountQualifier.EQUITY, NormalBalance.CR);
+
+        MockMultipartFile file = workbookWithUnit(new String[][]{
+                {"1100", "CC-ADM", "CBE-1", "50000", "Cash - CBE1 (1)"},
+                {"1100", "CC-ADM", "CBE-1", "50000", "Cash - CBE1 (2)"},
+                {"3100", "CC-ADM", "CBE-1", "100000", "Capital - CBE1"},
+                {"1100", "CC-ADM", "CBE-2", "60000", "Cash - CBE2"},
+                {"3100", "CC-ADM", "CBE-2", "30000", "Capital - CBE2 (1)"},
+                {"3100", "CC-ADM", "CBE-2", "30000", "Capital - CBE2 (2)"}
+        });
+
+        UUID journal1Id = UUID.randomUUID();
+        UUID journal2Id = UUID.randomUUID();
+        when(aiePipelineService.ingest(any(AieImportRequest.class), eq("MANUAL"), eq("OPENING")))
+                .thenReturn(AieImportResponse.builder()
+                                .status("POSTED").journalHeaderId(journal1Id).journalNumber("JE-CBE1-001")
+                                .message("Batch imported and posted successfully.").errors(List.of()).build(),
+                        AieImportResponse.builder()
+                                .status("POSTED").journalHeaderId(journal2Id).journalNumber("JE-CBE2-001")
+                                .message("Batch imported and posted successfully.").errors(List.of()).build());
+
+        OpeningBalanceImportResponse response = service.importBalances(
+                file, UUID.randomUUID(), ledgerId, UUID.randomUUID(), "accountant@unicon.com");
+
+        assertThat(response.success()).isTrue();
+        assertThat(response.totalLines()).isEqualTo(6);
+        assertThat(response.postedLines()).isEqualTo(6);
+        assertThat(response.journalCount()).isEqualTo(2);
+        assertThat(response.journals()).hasSize(2);
+        assertThat(response.journals()).extracting("segmentValue").containsExactly("CBE-1", "CBE-2");
+        assertThat(response.journals()).extracting("lineCount").containsExactly(3, 3);
+        assertThat(response.journals()).allSatisfy(j -> assertThat(j.success()).isTrue());
+
+        ArgumentCaptor<AieImportRequest> captor = ArgumentCaptor.forClass(AieImportRequest.class);
+        verify(aiePipelineService, org.mockito.Mockito.times(2))
+                .ingest(captor.capture(), eq("MANUAL"), eq("OPENING"));
+        List<AieImportRequest> requests = captor.getAllValues();
+        assertThat(requests.get(0).lines()).hasSize(3);
+        assertThat(requests.get(1).lines()).hasSize(3);
+        assertThat(requests.get(0).eventId()).isNotEqualTo(requests.get(1).eventId());
     }
 
     @Test

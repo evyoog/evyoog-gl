@@ -2,8 +2,10 @@ package com.evyoog.gl.aie.openingbalance.service;
 
 import com.evyoog.gl.aie.dto.AieImportRequest;
 import com.evyoog.gl.aie.dto.AieImportResponse;
+import com.evyoog.gl.aie.dto.AieLineErrorResponse;
 import com.evyoog.gl.aie.dto.AieLineRequest;
 import com.evyoog.gl.aie.openingbalance.dto.OpeningBalanceImportResponse;
+import com.evyoog.gl.aie.openingbalance.dto.OpeningBalanceJournalResult;
 import com.evyoog.gl.aie.openingbalance.dto.OpeningBalancePreviewLine;
 import com.evyoog.gl.aie.openingbalance.dto.OpeningBalancePreviewResponse;
 import com.evyoog.gl.aie.service.AiePipelineService;
@@ -34,6 +36,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -116,11 +119,29 @@ public class OpeningBalanceService {
                     .success(false)
                     .totalLines(preview.totalLines())
                     .postedLines(0)
+                    .journalCount(0)
+                    .journals(List.of())
                     .message(preview.errorLines() + " line(s) failed validation. No journal was posted.")
                     .errors(preview.errors())
                     .build();
         }
 
+        // A Ledger whose COA Structure has a 2nd balancing segment configured
+        // (isBalancing=true, balancingSequence=2 — e.g. Business Unit/Company)
+        // must never post all Opening Balance lines as one journal: any two
+        // lines carrying different segment values would fail PostingEngine
+        // Rule 11 (BALANCING_SEGMENT_CROSSED). Group and post one journal per
+        // distinct segment value instead.
+        if (parsed.balancingDimension() != null) {
+            return importGroupedByBalancingSegment(preview, parsed, parsed.balancingDimension(),
+                    legalEntityId, ledgerId, accountingPeriodId, createdBy);
+        }
+        return importSingleJournal(preview, parsed, legalEntityId, ledgerId, accountingPeriodId, createdBy);
+    }
+
+    private OpeningBalanceImportResponse importSingleJournal(OpeningBalancePreviewResponse preview, ParsedPreview parsed,
+                                                               UUID legalEntityId, UUID ledgerId,
+                                                               UUID accountingPeriodId, String createdBy) {
         if (!preview.isBalanced()) {
             String message = "Opening balances do not balance. DR: " + preview.totalDr()
                     + " CR: " + preview.totalCr() + " (difference: " + preview.imbalanceAmount() + ")";
@@ -128,24 +149,15 @@ public class OpeningBalanceService {
                     .success(false)
                     .totalLines(preview.totalLines())
                     .postedLines(0)
+                    .journalCount(0)
+                    .journals(List.of())
                     .message(message)
                     .errors(List.of(message))
                     .build();
         }
 
-        List<AieLineRequest> lines = new ArrayList<>();
-        for (int i = 0; i < preview.lines().size(); i++) {
-            OpeningBalancePreviewLine line = preview.lines().get(i);
-            Map<String, String> combination = new HashMap<>(parsed.parsedLines().get(i).dimensionValues());
-            combination.put(DimensionType.NATURAL_ACCOUNT.name(), line.accountCode());
-            // gl.journal_line's ck_debit_or_credit constraint requires the
-            // non-applicable side to be NULL, not zero — the preview DTO keeps
-            // 0 for display, but the pipeline must receive null here.
-            lines.add(new AieLineRequest(
-                    line.lineNumber(), line.accountCode(), combination,
-                    nullIfZero(line.drAmount()), nullIfZero(line.crAmount()), line.description(),
-                    null, null, null, null));
-        }
+        List<AieLineRequest> lines = buildLineRequests(preview.lines(), parsed.parsedLines(),
+                indexRange(preview.lines().size()));
 
         AieImportRequest request = new AieImportRequest(
                 "OB-" + UUID.randomUUID(),
@@ -161,15 +173,182 @@ public class OpeningBalanceService {
         AieImportResponse pipelineResponse = aiePipelineService.ingest(request, JOURNAL_SOURCE_CODE, JOURNAL_CATEGORY_CODE);
         boolean posted = "POSTED".equals(pipelineResponse.status());
 
+        OpeningBalanceJournalResult journalResult = OpeningBalanceJournalResult.builder()
+                .segmentValue(null)
+                .journalHeaderId(pipelineResponse.journalHeaderId())
+                .journalNumber(pipelineResponse.journalNumber())
+                .lineCount(preview.lines().size())
+                .success(posted)
+                .message(pipelineResponse.message())
+                .build();
+
         return OpeningBalanceImportResponse.builder()
                 .success(posted)
                 .journalHeaderId(pipelineResponse.journalHeaderId())
                 .journalNumber(pipelineResponse.journalNumber())
                 .totalLines(preview.totalLines())
                 .postedLines(posted ? preview.validLines() : 0)
+                .journalCount(posted ? 1 : 0)
+                .journals(List.of(journalResult))
                 .message(pipelineResponse.message())
-                .errors(pipelineResponse.errors().stream().map(e -> e.errorMessage()).toList())
+                .errors(pipelineResponse.errors().stream().map(AieLineErrorResponse::errorMessage).toList())
                 .build();
+    }
+
+    // Groups lines by the value of the Ledger's 2nd balancing segment
+    // (e.g. UNIT/Business Unit) and posts one journal per distinct value —
+    // each group must independently balance (DR=CR within that group) before
+    // ANY journal is posted, matching the existing all-or-nothing semantics
+    // of importSingleJournal's overall-balance check.
+    private OpeningBalanceImportResponse importGroupedByBalancingSegment(OpeningBalancePreviewResponse preview,
+            ParsedPreview parsed, FinanceDimension balancingDimension, UUID legalEntityId, UUID ledgerId,
+            UUID accountingPeriodId, String createdBy) {
+
+        String dimensionKey = balancingDimension.getDimensionType().name();
+
+        Map<String, List<Integer>> groups = new LinkedHashMap<>();
+        List<String> groupingErrors = new ArrayList<>();
+        for (int i = 0; i < parsed.parsedLines().size(); i++) {
+            ParsedLine line = parsed.parsedLines().get(i);
+            String value = line.dimensionValues().get(dimensionKey);
+            if (value == null || value.isBlank()) {
+                groupingErrors.add("Line " + line.lineNumber() + ": " + balancingDimension.getName()
+                        + " is required to group Opening Balance lines by balancing segment.");
+                continue;
+            }
+            groups.computeIfAbsent(value, k -> new ArrayList<>()).add(i);
+        }
+
+        if (!groupingErrors.isEmpty()) {
+            return OpeningBalanceImportResponse.builder()
+                    .success(false)
+                    .totalLines(preview.totalLines())
+                    .postedLines(0)
+                    .journalCount(0)
+                    .journals(List.of())
+                    .message(groupingErrors.size() + " line(s) missing the balancing segment value. No journal was posted.")
+                    .errors(groupingErrors)
+                    .build();
+        }
+
+        List<String> imbalanceErrors = new ArrayList<>();
+        for (Map.Entry<String, List<Integer>> entry : groups.entrySet()) {
+            BigDecimal groupDr = BigDecimal.ZERO;
+            BigDecimal groupCr = BigDecimal.ZERO;
+            for (int idx : entry.getValue()) {
+                OpeningBalancePreviewLine line = preview.lines().get(idx);
+                groupDr = groupDr.add(line.drAmount());
+                groupCr = groupCr.add(line.crAmount());
+            }
+            if (groupDr.compareTo(groupCr) != 0) {
+                imbalanceErrors.add(balancingDimension.getName() + " " + entry.getKey() + " does not balance. DR: "
+                        + groupDr + " CR: " + groupCr + " (difference: " + groupDr.subtract(groupCr).abs() + ")");
+            }
+        }
+
+        if (!imbalanceErrors.isEmpty()) {
+            return OpeningBalanceImportResponse.builder()
+                    .success(false)
+                    .totalLines(preview.totalLines())
+                    .postedLines(0)
+                    .journalCount(0)
+                    .journals(List.of())
+                    .message("Opening balances do not balance within one or more " + balancingDimension.getName()
+                            + " segments. No journal was posted.")
+                    .errors(imbalanceErrors)
+                    .build();
+        }
+
+        List<OpeningBalanceJournalResult> journalResults = new ArrayList<>();
+        List<String> postingErrors = new ArrayList<>();
+        int postedLines = 0;
+        boolean allPosted = true;
+
+        for (Map.Entry<String, List<Integer>> entry : groups.entrySet()) {
+            String segmentValue = entry.getKey();
+            List<Integer> indices = entry.getValue();
+
+            List<AieLineRequest> lines = buildLineRequests(preview.lines(), parsed.parsedLines(), indices);
+
+            AieImportRequest request = new AieImportRequest(
+                    "OB-" + UUID.randomUUID(),
+                    SOURCE_SYSTEM,
+                    legalEntityId,
+                    ledgerId,
+                    accountingPeriodId,
+                    null,
+                    "Opening Balance Import — " + balancingDimension.getName() + " " + segmentValue,
+                    createdBy,
+                    lines);
+
+            AieImportResponse pipelineResponse = aiePipelineService.ingest(request, JOURNAL_SOURCE_CODE, JOURNAL_CATEGORY_CODE);
+            boolean posted = "POSTED".equals(pipelineResponse.status());
+
+            journalResults.add(OpeningBalanceJournalResult.builder()
+                    .segmentValue(segmentValue)
+                    .journalHeaderId(pipelineResponse.journalHeaderId())
+                    .journalNumber(pipelineResponse.journalNumber())
+                    .lineCount(indices.size())
+                    .success(posted)
+                    .message(pipelineResponse.message())
+                    .build());
+
+            if (posted) {
+                postedLines += indices.size();
+            } else {
+                allPosted = false;
+                postingErrors.add(balancingDimension.getName() + " " + segmentValue + ": " + pipelineResponse.message());
+                postingErrors.addAll(pipelineResponse.errors().stream().map(AieLineErrorResponse::errorMessage).toList());
+                // Stop at the first posting failure — journals already posted for
+                // earlier groups remain posted (each is its own committed AIE
+                // batch/journal), so continuing would only obscure which groups
+                // succeeded. The response's journals[] shows exactly what happened.
+                break;
+            }
+        }
+
+        int postedJournalCount = (int) journalResults.stream().filter(OpeningBalanceJournalResult::success).count();
+
+        return OpeningBalanceImportResponse.builder()
+                .success(allPosted)
+                .journalHeaderId(journalResults.size() == 1 ? journalResults.get(0).journalHeaderId() : null)
+                .journalNumber(journalResults.size() == 1 ? journalResults.get(0).journalNumber() : null)
+                .totalLines(preview.totalLines())
+                .postedLines(postedLines)
+                .journalCount(postedJournalCount)
+                .journals(journalResults)
+                .message(allPosted
+                        ? "Posted " + postedJournalCount + " journal(s), one per " + balancingDimension.getName() + "."
+                        : postedJournalCount + " journal(s) posted before a failure stopped the import.")
+                .errors(postingErrors)
+                .build();
+    }
+
+    private List<AieLineRequest> buildLineRequests(List<OpeningBalancePreviewLine> previewLines,
+                                                     List<ParsedLine> parsedLines, List<Integer> indices) {
+        List<AieLineRequest> lines = new ArrayList<>();
+        for (int seq = 0; seq < indices.size(); seq++) {
+            int idx = indices.get(seq);
+            OpeningBalancePreviewLine line = previewLines.get(idx);
+            Map<String, String> combination = new HashMap<>(parsedLines.get(idx).dimensionValues());
+            combination.put(DimensionType.NATURAL_ACCOUNT.name(), line.accountCode());
+            // gl.journal_line's ck_debit_or_credit constraint requires the
+            // non-applicable side to be NULL, not zero — the preview DTO keeps
+            // 0 for display, but the pipeline must receive null here.
+            lines.add(new AieLineRequest(
+                    seq + 1, line.accountCode(), combination,
+                    nullIfZero(line.drAmount()), nullIfZero(line.crAmount()), line.description(),
+                    null, null, null, null));
+        }
+        return lines;
+    }
+
+    private List<Integer> indexRange(int size) {
+        List<Integer> indices = new ArrayList<>(size);
+        for (int i = 0; i < size; i++) {
+            indices.add(i);
+        }
+        return indices;
     }
 
     private BigDecimal nullIfZero(BigDecimal value) {
@@ -182,7 +361,8 @@ public class OpeningBalanceService {
                                BigDecimal balance, String description) {
     }
 
-    private record ParsedPreview(List<ParsedLine> parsedLines, OpeningBalancePreviewResponse response) {
+    private record ParsedPreview(List<ParsedLine> parsedLines, OpeningBalancePreviewResponse response,
+                                  FinanceDimension balancingDimension) {
     }
 
     private ParsedPreview buildPreview(MultipartFile file, UUID ledgerId) throws IOException {
@@ -201,6 +381,19 @@ public class OpeningBalanceService {
                         .stream()
                         .filter(d -> d.getDimensionType() != DimensionType.NATURAL_ACCOUNT)
                         .toList();
+
+        // The 1st balancing segment (Legal Entity) is implicit and already
+        // scoped by legalEntityId on every GL table — only a configured 2nd
+        // balancing segment (e.g. Business Unit) requires OB import to group
+        // lines into separate journals. See PostingEngine Rule 11.
+        FinanceDimension balancingDimension = ledger.getCoaStructure() == null
+                ? null
+                : financeDimensionRepository
+                        .findByCoaStructureIdAndIsBalancingTrueOrderByBalancingSequenceAsc(ledger.getCoaStructure().getId())
+                        .stream()
+                        .filter(d -> d.getBalancingSequence() != null && d.getBalancingSequence() == 2)
+                        .findFirst()
+                        .orElse(null);
 
         List<ParsedLine> parsedLines = parseRows(file, otherDimensions);
 
@@ -307,7 +500,7 @@ public class OpeningBalanceService {
                 .errors(errors)
                 .build();
 
-        return new ParsedPreview(parsedLines, response);
+        return new ParsedPreview(parsedLines, response, balancingDimension);
     }
 
     private List<ParsedLine> parseRows(MultipartFile file, List<FinanceDimension> dimensions) throws IOException {
