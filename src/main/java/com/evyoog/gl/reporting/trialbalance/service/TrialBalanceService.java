@@ -27,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -74,8 +75,11 @@ public class TrialBalanceService {
             }
         }
 
-        List<TrialBalanceLine> lines = balances.stream()
+        Map<UUID, List<AccountBalance>> byAccount = balances.stream()
                 .filter(ab -> Boolean.TRUE.equals(ab.getNaturalAccount().isPostable()))
+                .collect(Collectors.groupingBy(ab -> ab.getNaturalAccount().getId()));
+
+        List<TrialBalanceLine> lines = byAccount.values().stream()
                 .filter(this::hasActivity)
                 .map(this::toTrialBalanceLine)
                 .sorted(Comparator.comparing(TrialBalanceLine::accountCode))
@@ -137,12 +141,17 @@ public class TrialBalanceService {
         }
     }
 
-    private TrialBalanceLine toTrialBalanceLine(AccountBalance ab) {
-        BigDecimal ending = ab.getBeginningBalance()
-                .add(ab.getPeriodToDateDr())
-                .subtract(ab.getPeriodToDateCr());
+    private TrialBalanceLine toTrialBalanceLine(List<AccountBalance> group) {
+        BigDecimal beginning = sum(group, AccountBalance::getBeginningBalance);
+        BigDecimal ptdDr = sum(group, AccountBalance::getPeriodToDateDr);
+        BigDecimal ptdCr = sum(group, AccountBalance::getPeriodToDateCr);
+        BigDecimal ytdDr = sum(group, AccountBalance::getYearToDateDr);
+        BigDecimal ytdCr = sum(group, AccountBalance::getYearToDateCr);
 
-        NormalBalance normalBalance = ab.getNaturalAccount().getNormalBalance();
+        BigDecimal ending = beginning.add(ptdDr).subtract(ptdCr);
+
+        var naturalAccount = group.get(0).getNaturalAccount();
+        NormalBalance normalBalance = naturalAccount.getNormalBalance();
 
         BigDecimal debitBal = (normalBalance == NormalBalance.DR)
                 ? ending : BigDecimal.ZERO;
@@ -150,26 +159,30 @@ public class TrialBalanceService {
                 ? ending.abs() : BigDecimal.ZERO;
 
         return TrialBalanceLine.builder()
-                .accountCode(ab.getNaturalAccount().getCode())
-                .accountName(ab.getNaturalAccount().getName())
-                .accountQualifier(ab.getNaturalAccount().getAccountQualifier() != null
-                        ? ab.getNaturalAccount().getAccountQualifier().name() : null)
+                .accountCode(naturalAccount.getCode())
+                .accountName(naturalAccount.getName())
+                .accountQualifier(naturalAccount.getAccountQualifier() != null
+                        ? naturalAccount.getAccountQualifier().name() : null)
                 .normalBalance(normalBalance != null ? normalBalance.name() : null)
-                .beginningBalance(ab.getBeginningBalance())
-                .periodToDateDr(ab.getPeriodToDateDr())
-                .periodToDateCr(ab.getPeriodToDateCr())
-                .yearToDateDr(ab.getYearToDateDr())
-                .yearToDateCr(ab.getYearToDateCr())
+                .beginningBalance(beginning)
+                .periodToDateDr(ptdDr)
+                .periodToDateCr(ptdCr)
+                .yearToDateDr(ytdDr)
+                .yearToDateCr(ytdCr)
                 .endingBalance(ending)
                 .debitBalance(debitBal)
                 .creditBalance(creditBal)
                 .build();
     }
 
-    private boolean hasActivity(AccountBalance ab) {
-        return ab.getPeriodToDateDr().compareTo(BigDecimal.ZERO) != 0
-                || ab.getPeriodToDateCr().compareTo(BigDecimal.ZERO) != 0
-                || ab.getBeginningBalance().compareTo(BigDecimal.ZERO) != 0;
+    private BigDecimal sum(List<AccountBalance> group, Function<AccountBalance, BigDecimal> extractor) {
+        return group.stream().map(extractor).reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private boolean hasActivity(List<AccountBalance> group) {
+        return sum(group, AccountBalance::getPeriodToDateDr).compareTo(BigDecimal.ZERO) != 0
+                || sum(group, AccountBalance::getPeriodToDateCr).compareTo(BigDecimal.ZERO) != 0
+                || sum(group, AccountBalance::getBeginningBalance).compareTo(BigDecimal.ZERO) != 0;
     }
 
     private boolean hasActivityLine(TrialBalanceLine line) {

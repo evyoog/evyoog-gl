@@ -173,6 +173,23 @@ class TrialBalanceServiceTest {
     }
 
     @Test
+    void testGenerate_multipleCombinationsSameAccount_aggregatesIntoOneLine() {
+        DimensionValue bank = account("1210", AccountQualifier.ASSET, NormalBalance.DR, true);
+        stubHappyPath(List.of(
+                balance(bank, BigDecimal.ZERO, new BigDecimal("100.00"), BigDecimal.ZERO),
+                balance(bank, BigDecimal.ZERO, new BigDecimal("250.00"), BigDecimal.ZERO),
+                balance(bank, BigDecimal.ZERO, new BigDecimal("650.00"), new BigDecimal("50.00"))
+        ), FinanceMode.THICK);
+
+        TrialBalanceResponse response = service.generate(legalEntityId, periodId);
+
+        assertThat(response.lines()).hasSize(1);
+        assertThat(response.lines().get(0).accountCode()).isEqualTo("1210");
+        assertThat(response.lines().get(0).debitBalance()).isEqualByComparingTo("950.00");
+        assertThat(response.totalDebit()).isEqualByComparingTo("950.00");
+    }
+
+    @Test
     void testGenerate_sortedByAccountCode() {
         DimensionValue b = account("4000", AccountQualifier.REVENUE, NormalBalance.CR, true);
         DimensionValue a = account("1000", AccountQualifier.ASSET, NormalBalance.DR, true);

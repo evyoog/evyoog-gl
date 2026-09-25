@@ -61,11 +61,13 @@ public class BalanceSheetService {
                     HttpStatus.NOT_FOUND);
         }
 
-        Map<UUID, AccountBalance> balanceByAccountId = balances.stream()
+        Map<UUID, BalanceTotals> balanceByAccountId = balances.stream()
                 .filter(ab -> isBalanceSheetAccount(ab.getNaturalAccount()))
                 .collect(Collectors.toMap(
                         ab -> ab.getNaturalAccount().getId(),
-                        ab -> ab));
+                        ab -> new BalanceTotals(
+                                ab.getBeginningBalance(), ab.getPeriodToDateDr(), ab.getPeriodToDateCr()),
+                        BalanceTotals::add));
 
         List<DimensionValue> allBsAccounts = dimensionValueRepository
                 .findByFinanceDimension_Ledger_IdAndAccountQualifierIn(
@@ -113,7 +115,7 @@ public class BalanceSheetService {
 
     private List<BalanceSheetLineItem> buildHierarchy(
             List<DimensionValue> allAccounts,
-            Map<UUID, AccountBalance> balances,
+            Map<UUID, BalanceTotals> balances,
             AccountQualifier qualifier,
             UUID parentId) {
 
@@ -128,16 +130,16 @@ public class BalanceSheetService {
                     List<BalanceSheetLineItem> children = buildHierarchy(
                             allAccounts, balances, qualifier, dv.getId());
 
-                    AccountBalance bal = balances.get(dv.getId());
+                    BalanceTotals bal = balances.get(dv.getId());
 
                     BigDecimal beginning = BigDecimal.ZERO;
                     BigDecimal ptdDr = BigDecimal.ZERO;
                     BigDecimal ptdCr = BigDecimal.ZERO;
 
                     if (bal != null) {
-                        beginning = bal.getBeginningBalance();
-                        ptdDr = bal.getPeriodToDateDr();
-                        ptdCr = bal.getPeriodToDateCr();
+                        beginning = bal.beginningBalance();
+                        ptdDr = bal.periodToDateDr();
+                        ptdCr = bal.periodToDateCr();
                     }
 
                     BigDecimal rawEnding = beginning.add(ptdDr).subtract(ptdCr);
@@ -177,5 +179,15 @@ public class BalanceSheetService {
         return dv.getAccountQualifier() == AccountQualifier.ASSET
                 || dv.getAccountQualifier() == AccountQualifier.LIABILITY
                 || dv.getAccountQualifier() == AccountQualifier.EQUITY;
+    }
+
+    private record BalanceTotals(BigDecimal beginningBalance, BigDecimal periodToDateDr, BigDecimal periodToDateCr) {
+
+        BalanceTotals add(BalanceTotals other) {
+            return new BalanceTotals(
+                    beginningBalance.add(other.beginningBalance),
+                    periodToDateDr.add(other.periodToDateDr),
+                    periodToDateCr.add(other.periodToDateCr));
+        }
     }
 }

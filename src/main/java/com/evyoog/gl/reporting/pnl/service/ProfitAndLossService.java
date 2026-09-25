@@ -59,11 +59,14 @@ public class ProfitAndLossService {
                     HttpStatus.NOT_FOUND);
         }
 
-        Map<UUID, AccountBalance> balanceByAccountId = balances.stream()
+        Map<UUID, BalanceTotals> balanceByAccountId = balances.stream()
                 .filter(ab -> isRevenueOrExpense(ab.getNaturalAccount()))
                 .collect(Collectors.toMap(
                         ab -> ab.getNaturalAccount().getId(),
-                        ab -> ab));
+                        ab -> new BalanceTotals(
+                                ab.getPeriodToDateDr(), ab.getPeriodToDateCr(),
+                                ab.getYearToDateDr(), ab.getYearToDateCr()),
+                        BalanceTotals::add));
 
         if (balanceByAccountId.isEmpty()) {
             throw new EvyoogException("NO_PNL_BALANCES",
@@ -114,7 +117,7 @@ public class ProfitAndLossService {
 
     private List<PnlLineItem> buildHierarchy(
             List<DimensionValue> allAccounts,
-            Map<UUID, AccountBalance> balances,
+            Map<UUID, BalanceTotals> balances,
             AccountQualifier qualifier,
             UUID parentId) {
 
@@ -129,7 +132,7 @@ public class ProfitAndLossService {
                     List<PnlLineItem> children = buildHierarchy(
                             allAccounts, balances, qualifier, dv.getId());
 
-                    AccountBalance bal = balances.get(dv.getId());
+                    BalanceTotals bal = balances.get(dv.getId());
 
                     BigDecimal ptdDr = BigDecimal.ZERO;
                     BigDecimal ptdCr = BigDecimal.ZERO;
@@ -137,10 +140,10 @@ public class ProfitAndLossService {
                     BigDecimal ytdCr = BigDecimal.ZERO;
 
                     if (bal != null) {
-                        ptdDr = bal.getPeriodToDateDr();
-                        ptdCr = bal.getPeriodToDateCr();
-                        ytdDr = bal.getYearToDateDr();
-                        ytdCr = bal.getYearToDateCr();
+                        ptdDr = bal.periodToDateDr();
+                        ptdCr = bal.periodToDateCr();
+                        ytdDr = bal.yearToDateDr();
+                        ytdCr = bal.yearToDateCr();
                     }
 
                     BigDecimal netAmount = (qualifier == AccountQualifier.REVENUE)
@@ -179,5 +182,17 @@ public class ProfitAndLossService {
     private boolean isRevenueOrExpense(DimensionValue dv) {
         return dv.getAccountQualifier() == AccountQualifier.REVENUE
                 || dv.getAccountQualifier() == AccountQualifier.EXPENSE;
+    }
+
+    private record BalanceTotals(
+            BigDecimal periodToDateDr, BigDecimal periodToDateCr, BigDecimal yearToDateDr, BigDecimal yearToDateCr) {
+
+        BalanceTotals add(BalanceTotals other) {
+            return new BalanceTotals(
+                    periodToDateDr.add(other.periodToDateDr),
+                    periodToDateCr.add(other.periodToDateCr),
+                    yearToDateDr.add(other.yearToDateDr),
+                    yearToDateCr.add(other.yearToDateCr));
+        }
     }
 }

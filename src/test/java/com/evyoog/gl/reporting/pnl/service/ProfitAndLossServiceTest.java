@@ -225,6 +225,22 @@ class ProfitAndLossServiceTest {
     }
 
     @Test
+    void testGenerate_multipleCombinationsSameAccount_aggregatesIntoOneLine() {
+        DimensionValue sales = account("4100", AccountQualifier.REVENUE, null, false);
+        stubHappyPath(
+                List.of(balance(sales, BigDecimal.ZERO, new BigDecimal("100.00")),
+                        balance(sales, BigDecimal.ZERO, new BigDecimal("250.00")),
+                        balance(sales, BigDecimal.ZERO, new BigDecimal("650.00"))),
+                List.of(sales), FinanceMode.THICK);
+
+        ProfitAndLossResponse response = service.generate(legalEntityId, periodId);
+
+        assertThat(response.revenueItems()).hasSize(1);
+        assertThat(response.revenueItems().get(0).netAmount()).isEqualByComparingTo("1000.00");
+        assertThat(response.totalRevenue()).isEqualByComparingTo("1000.00");
+    }
+
+    @Test
     void testGenerate_sortedByDisplayOrderThenCode() {
         DimensionValue export = account("4200", AccountQualifier.REVENUE, null, false);
         DimensionValue domestic = account("4100", AccountQualifier.REVENUE, null, false);

@@ -197,6 +197,23 @@ class BalanceSheetServiceTest {
     }
 
     @Test
+    void testGenerate_multipleCombinationsSameAccount_aggregatesIntoOneLine() {
+        DimensionValue bank = account("1210", AccountQualifier.ASSET, null, false);
+        stubHappyPath(
+                List.of(balance(bank, BigDecimal.ZERO, new BigDecimal("100.00"), BigDecimal.ZERO),
+                        balance(bank, BigDecimal.ZERO, new BigDecimal("250.00"), BigDecimal.ZERO),
+                        balance(bank, BigDecimal.ZERO, new BigDecimal("650.00"), BigDecimal.ZERO),
+                        balance(bank, BigDecimal.ZERO, new BigDecimal("0.00"), new BigDecimal("50.00"))),
+                List.of(bank), FinanceMode.THICK);
+
+        BalanceSheetResponse response = service.generate(legalEntityId, periodId);
+
+        assertThat(response.assetItems()).hasSize(1);
+        assertThat(response.assetItems().get(0).endingBalance()).isEqualByComparingTo("950.00");
+        assertThat(response.totalAssets()).isEqualByComparingTo("950.00");
+    }
+
+    @Test
     void testGenerate_isProfitable_whenAssetsExceedLiabilities() {
         DimensionValue cash = account("1000", AccountQualifier.ASSET, null, false);
         DimensionValue payable = account("2000", AccountQualifier.LIABILITY, null, false);

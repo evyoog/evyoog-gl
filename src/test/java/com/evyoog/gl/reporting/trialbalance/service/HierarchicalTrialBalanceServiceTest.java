@@ -212,6 +212,24 @@ class HierarchicalTrialBalanceServiceTest {
     }
 
     @Test
+    void testGetHierarchicalTrialBalance_multipleCombinationsSameAccount_aggregatesIntoOneLine() {
+        DimensionValue bank = account("1210", AccountQualifier.ASSET, NormalBalance.DR, false, null, 1);
+        stubCommon(List.of(bank));
+        when(accountBalanceRepository.findByLegalEntityIdAndAccountingPeriodId(legalEntityId, periodId))
+                .thenReturn(List.of(
+                        balance(bank, BigDecimal.ZERO, new BigDecimal("100.00"), BigDecimal.ZERO),
+                        balance(bank, BigDecimal.ZERO, new BigDecimal("250.00"), BigDecimal.ZERO),
+                        balance(bank, BigDecimal.ZERO, new BigDecimal("650.00"), new BigDecimal("50.00"))));
+
+        HierarchicalTrialBalanceResponse response = service.generate(legalEntityId, periodId, null, null);
+
+        assertThat(response.lines()).hasSize(1);
+        assertThat(response.lines().get(0).accountCode()).isEqualTo("1210");
+        assertThat(response.lines().get(0).debitBalance()).isEqualByComparingTo("950.00");
+        assertThat(response.totalDebit()).isEqualByComparingTo("950.00");
+    }
+
+    @Test
     void testGetHierarchicalTrialBalance_noBalances_throws404() {
         DimensionValue cash = account("1000", AccountQualifier.ASSET, NormalBalance.DR, false, null, 1);
         stubCommon(List.of(cash));
