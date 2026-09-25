@@ -23,6 +23,7 @@ public record BalanceSheetResponse(
         BigDecimal totalAssets,
         BigDecimal totalLiabilities,
         BigDecimal totalEquity,
+        BigDecimal netIncome,
         BigDecimal totalLiabilitiesAndEquity,
         Boolean isBalanced
 ) {

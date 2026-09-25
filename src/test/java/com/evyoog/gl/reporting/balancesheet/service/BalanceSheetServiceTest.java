@@ -72,6 +72,13 @@ class BalanceSheetServiceTest {
                 .parentValue(parent).isSummary(summary).isPostable(!summary).displayOrder(0).build();
     }
 
+    private DimensionValue pnlAccount(String code, AccountQualifier qualifier) {
+        return DimensionValue.builder().id(UUID.randomUUID()).code(code).name(code)
+                .accountQualifier(qualifier).normalBalance(
+                        qualifier == AccountQualifier.REVENUE ? NormalBalance.CR : NormalBalance.DR)
+                .isSummary(false).isPostable(true).displayOrder(0).build();
+    }
+
     private AccountBalance balance(DimensionValue account, BigDecimal beginning, BigDecimal ptdDr, BigDecimal ptdCr) {
         return AccountBalance.builder()
                 .id(UUID.randomUUID())
@@ -194,6 +201,49 @@ class BalanceSheetServiceTest {
         assertThat(response.totalLiabilities()).isEqualByComparingTo("400.00");
         assertThat(response.totalEquity()).isEqualByComparingTo("600.00");
         assertThat(response.totalLiabilitiesAndEquity()).isEqualByComparingTo("1000.00");
+    }
+
+    @Test
+    void testGenerate_assetsEqualLiabilitiesPlusEquityPlusNetIncome_isBalancedTrue() {
+        DimensionValue cash = account("1000", AccountQualifier.ASSET, null, false);
+        DimensionValue payable = account("2000", AccountQualifier.LIABILITY, null, false);
+        DimensionValue equity = account("3000", AccountQualifier.EQUITY, null, false);
+        DimensionValue sales = pnlAccount("4100", AccountQualifier.REVENUE);
+        DimensionValue expense = pnlAccount("5100", AccountQualifier.EXPENSE);
+        stubHappyPath(
+                List.of(
+                        balance(cash, BigDecimal.ZERO, new BigDecimal("1600.00"), BigDecimal.ZERO),
+                        balance(payable, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("400.00")),
+                        balance(equity, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("600.00")),
+                        balance(sales, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("700.00")),
+                        balance(expense, BigDecimal.ZERO, new BigDecimal("100.00"), BigDecimal.ZERO)),
+                List.of(cash, payable, equity), FinanceMode.THICK);
+
+        BalanceSheetResponse response = service.generate(legalEntityId, periodId);
+
+        assertThat(response.netIncome()).isEqualByComparingTo("600.00");
+        assertThat(response.totalAssets()).isEqualByComparingTo("1600.00");
+        assertThat(response.totalLiabilitiesAndEquity()).isEqualByComparingTo("1600.00");
+        assertThat(response.isBalanced()).isTrue();
+    }
+
+    @Test
+    void testGenerate_netIncomeLine_appearsInEquitySection() {
+        DimensionValue sales = pnlAccount("4100", AccountQualifier.REVENUE);
+        DimensionValue expense = pnlAccount("5100", AccountQualifier.EXPENSE);
+        stubHappyPath(
+                List.of(
+                        balance(sales, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("500.00")),
+                        balance(expense, BigDecimal.ZERO, new BigDecimal("200.00"), BigDecimal.ZERO)),
+                List.of(), FinanceMode.THICK);
+
+        BalanceSheetResponse response = service.generate(legalEntityId, periodId);
+
+        assertThat(response.equityItems())
+                .anySatisfy(item -> {
+                    assertThat(item.accountCode()).isEqualTo("NET-INCOME");
+                    assertThat(item.endingBalance()).isEqualByComparingTo("300.00");
+                });
     }
 
     @Test

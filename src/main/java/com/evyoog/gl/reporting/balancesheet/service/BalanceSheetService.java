@@ -22,6 +22,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +32,8 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class BalanceSheetService {
+
+    private static final BigDecimal BALANCE_TOLERANCE = new BigDecimal("0.01");
 
     private final LegalEntityLedgerRepository legalEntityLedgerRepository;
     private final AccountBalanceRepository accountBalanceRepository;
@@ -84,7 +87,13 @@ public class BalanceSheetService {
         BigDecimal totalAssets = sumEndingBalance(assetItems);
         BigDecimal totalLiabilities = sumEndingBalance(liabilityItems);
         BigDecimal totalEquity = sumEndingBalance(equityItems);
-        BigDecimal totalLandE = totalLiabilities.add(totalEquity);
+
+        BigDecimal netIncome = calculateNetIncome(balances);
+
+        List<BalanceSheetLineItem> equityItemsWithNetIncome = new ArrayList<>(equityItems);
+        equityItemsWithNetIncome.add(netIncomeLineItem(netIncome));
+
+        BigDecimal totalLandE = totalLiabilities.add(totalEquity).add(netIncome);
 
         AccountingPeriod period = accountingPeriodRepository.findById(periodId)
                 .orElseThrow(() -> new EvyoogException("PERIOD_NOT_FOUND",
@@ -104,12 +113,13 @@ public class BalanceSheetService {
                 .generatedAt(LocalDate.now())
                 .assetItems(assetItems)
                 .liabilityItems(liabilityItems)
-                .equityItems(equityItems)
+                .equityItems(equityItemsWithNetIncome)
                 .totalAssets(totalAssets)
                 .totalLiabilities(totalLiabilities)
                 .totalEquity(totalEquity)
+                .netIncome(netIncome)
                 .totalLiabilitiesAndEquity(totalLandE)
-                .isBalanced(totalAssets.compareTo(totalLandE) == 0)
+                .isBalanced(totalAssets.subtract(totalLandE).abs().compareTo(BALANCE_TOLERANCE) < 0)
                 .build();
     }
 
@@ -179,6 +189,37 @@ public class BalanceSheetService {
         return dv.getAccountQualifier() == AccountQualifier.ASSET
                 || dv.getAccountQualifier() == AccountQualifier.LIABILITY
                 || dv.getAccountQualifier() == AccountQualifier.EQUITY;
+    }
+
+    private BigDecimal calculateNetIncome(List<AccountBalance> balances) {
+        BigDecimal totalRevenue = balances.stream()
+                .filter(ab -> ab.getNaturalAccount().getAccountQualifier() == AccountQualifier.REVENUE)
+                .map(ab -> ab.getPeriodToDateCr().subtract(ab.getPeriodToDateDr()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal totalExpenses = balances.stream()
+                .filter(ab -> ab.getNaturalAccount().getAccountQualifier() == AccountQualifier.EXPENSE)
+                .map(ab -> ab.getPeriodToDateDr().subtract(ab.getPeriodToDateCr()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        return totalRevenue.subtract(totalExpenses);
+    }
+
+    private BalanceSheetLineItem netIncomeLineItem(BigDecimal netIncome) {
+        return BalanceSheetLineItem.builder()
+                .accountId(null)
+                .accountCode("NET-INCOME")
+                .accountName("Net Income (Current Period)")
+                .accountQualifier(AccountQualifier.EQUITY.name())
+                .isSummary(false)
+                .isPostable(false)
+                .displayOrder(Integer.MAX_VALUE)
+                .beginningBalance(BigDecimal.ZERO)
+                .periodToDateDr(BigDecimal.ZERO)
+                .periodToDateCr(BigDecimal.ZERO)
+                .endingBalance(netIncome)
+                .children(List.of())
+                .build();
     }
 
     private record BalanceTotals(BigDecimal beginningBalance, BigDecimal periodToDateDr, BigDecimal periodToDateCr) {
