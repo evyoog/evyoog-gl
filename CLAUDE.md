@@ -2051,3 +2051,29 @@ V31 migration: add missing WHO columns to 6 tables above
   success-without-reason skips the reason audit log, permanently-closed
   rejects, non-manager rejects), `mvn test -DskipITs` green against the
   live dev DB. `PeriodStatusIT` (5 tests, Testcontainers) reverified green.
+
+## FinanceDimensionIT stale-test fix (September 2026 — no code change, test only)
+
+- `createThickLedgerDimensions_upToFifteen` pre-dated commit `44ba6ab`
+  (`FinanceDimensionService` duplicate-`DimensionType`-per-Ledger
+  validation) and was never updated after — it tried to create 15 `CUSTOM`
+  dimensions on one THICK Ledger, which the `DUPLICATE_DIMENSION_TYPE` rule
+  now rejects on the *second* one. Not a regression from any session in
+  this log; just stale.
+- Renamed to `createThickLedgerDimensions_oncePerType_succeedsUpToLimit`:
+  creates exactly one dimension per `DimensionType` (all 8 values —
+  `LEGAL_ENTITY, NATURAL_ACCOUNT, COST_CENTRE, PROFIT_CENTRE, INTERCOMPANY,
+  PRODUCT, PROJECT, CUSTOM`), then asserts a 9th (reusing `CUSTOM`) is
+  rejected with `409 DUPLICATE_DIMENSION_TYPE`. Deliberately reuses `CUSTOM`
+  rather than `LEGAL_ENTITY`/`NATURAL_ACCOUNT` for that last assertion —
+  those two have their own dedicated, more specific error codes
+  (`LEGAL_ENTITY_DIMENSION_EXISTS`/`NATURAL_ACCOUNT_DIMENSION_EXISTS`) that
+  fire *before* the generic `DUPLICATE_DIMENSION_TYPE` check, so picking
+  either of those types for the "already used" assertion would have
+  asserted the wrong code.
+- A THICK Ledger can therefore have at most 8 Finance Dimensions in
+  practice today, not the 15 `MAX_DIMENSIONS_EXCEEDED` alone would suggest
+  — noted in a comment on the test since it's easy to assume otherwise from
+  `FinanceDimensionService`'s `MAX_DIMENSIONS = 15` constant alone.
+- Verified `FinanceDimensionIT` in isolation: 3/3 green.
+  Unit test count unchanged (464) — this was an IT-only fix.
