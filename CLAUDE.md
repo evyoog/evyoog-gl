@@ -2014,3 +2014,40 @@ V31 migration: add missing WHO columns to 6 tables above
   application). `AccountingCalendarIT`/`PeriodStatusIT`/`AccountingPeriodIT`
   (13 tests) reverified green against a fresh Testcontainers DB.
 - Next migration after V34 = V35.
+
+## Dedicated /reopen endpoint (September 2026 — no migration)
+
+- **Correction to the build prompt's premise**: there was no
+  `PeriodManagementService.reopen()` method to "wire up" — reopen (Rule 6)
+  had only ever existed as an *implicit* branch inside `open()` (a CLOSED or
+  PERMANENTLY_CLOSED period status triggers the same Rule 6 checks when
+  `POST .../open` is called). `open()`/`close()` were already confirmed
+  routing through `PeriodManagementService`, not `PeriodStatusService`
+  directly — that part of the prompt's premise was accurate.
+- Added a genuinely new, dedicated `POST /api/v1/gl/period-status/{id}/reopen`
+  (`ReopenPeriodStatusRequest{reopenedBy, reason}`) and a new public
+  `PeriodManagementService.reopen(UUID id, UUID actingUserId, String
+  reopenedBy, String reason)`. Both the new method and `open()`'s existing
+  implicit-reopen branch now share one private `doReopen(...)` helper
+  (Rule 6 validation + `periodStatusService.reopen(...)`), so there is one
+  reopen code path, not two — `open()`'s observable behaviour and every
+  existing `PeriodManagementServiceTest` reopen-via-open test are unchanged.
+- **`actingUserId` kept, `reason` added to the audit trail, not a DB
+  column**: the prompt described the delegate call as `reopen(id,
+  reopenedBy, reason)`, but Rule 6c's "GL_MANAGER or above" check needs the
+  caller's real authenticated user id (from `Authentication`, resolved in
+  the controller exactly like the existing `open`/`permanently-close`
+  endpoints) — dropping that parameter to match a literal 3-arg signature
+  would have silently defeated the manager check the whole rule exists for.
+  `reason` has no backing column on `gl.period_status` (none was requested)
+  — it's written to `audit_log` as a second entry
+  (`period_status_reopen_reason`) alongside the normal `period_status`
+  UPDATE entry, and skipped entirely when blank/omitted.
+- **Response type is `PeriodStatusResponse`, not the raw `PeriodStatus`
+  entity** the prompt named — CLAUDE.md Rule "never expose JPA entities in
+  API responses" applies here exactly as it does to every other endpoint on
+  this controller.
+- Test count: 464 unit tests (460 prior + 4 new: success-with-reason,
+  success-without-reason skips the reason audit log, permanently-closed
+  rejects, non-manager rejects), `mvn test -DskipITs` green against the
+  live dev DB. `PeriodStatusIT` (5 tests, Testcontainers) reverified green.

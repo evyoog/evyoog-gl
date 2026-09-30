@@ -4,6 +4,7 @@ import com.evyoog.gl.auth.domain.Role;
 import com.evyoog.gl.auth.domain.UserRole;
 import com.evyoog.gl.auth.repository.UserRoleRepository;
 import com.evyoog.gl.calendar.domain.AccountingCalendar;
+import com.evyoog.gl.common.audit.service.AuditService;
 import com.evyoog.gl.common.exception.EvyoogException;
 import com.evyoog.gl.enterprise.domain.AccountingStandard;
 import com.evyoog.gl.enterprise.domain.LegalEntity;
@@ -30,6 +31,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -48,6 +50,8 @@ class PeriodManagementServiceTest {
     private LegalEntityPeriodConfigService configService;
     @Mock
     private PeriodStatusService periodStatusService;
+    @Mock
+    private AuditService auditService;
 
     private PeriodManagementService service;
 
@@ -60,7 +64,7 @@ class PeriodManagementServiceTest {
     @BeforeEach
     void setUp() {
         service = new PeriodManagementService(periodStatusRepository, accountingPeriodRepository,
-                userRoleRepository, configService, periodStatusService);
+                userRoleRepository, configService, periodStatusService, auditService);
 
         legalEntityId = UUID.randomUUID();
         calendarId = UUID.randomUUID();
@@ -412,6 +416,86 @@ class PeriodManagementServiceTest {
 
         assertThat(result.status()).isEqualTo(PeriodStatusEnum.OPEN);
         verify(periodStatusService).reopen(ps.getId(), "prashanth");
+    }
+
+    // ---- Rule 6 — dedicated reopen(id, actingUserId, reopenedBy, reason) endpoint ----
+
+    @Test
+    void testReopenEndpoint_closedCurrentFY_succeedsAndLogsReason() {
+        LocalDate today = LocalDate.now();
+        AccountingPeriod currentPeriod = period("CURRENT", 6, "2025-26", AccountingPeriodType.REGULAR,
+                today.minusDays(5), today.plusDays(5));
+
+        when(accountingPeriodRepository.findByAccountingCalendarIdOrderByStartDateAsc(calendarId))
+                .thenReturn(List.of(currentPeriod));
+
+        PeriodStatus ps = periodStatus(currentPeriod, PeriodStatusEnum.CLOSED);
+        when(periodStatusRepository.findById(ps.getId())).thenReturn(Optional.of(ps));
+        when(periodStatusService.reopen(ps.getId(), "prashanth")).thenReturn(dummyResponse(PeriodStatusEnum.OPEN));
+
+        grantRole("GL_MANAGER");
+
+        PeriodStatusResponse result = service.reopen(ps.getId(), actingUserId, "prashanth", "Late invoice correction");
+
+        assertThat(result.status()).isEqualTo(PeriodStatusEnum.OPEN);
+        verify(periodStatusService).reopen(ps.getId(), "prashanth");
+        verify(auditService).log(any(), eq("period_status_reopen_reason"), eq(ps.getId()), any(),
+                eq(java.util.Map.of("reason", "Late invoice correction")), eq("prashanth"));
+    }
+
+    @Test
+    void testReopenEndpoint_noReasonGiven_skipsReasonAuditLog() {
+        LocalDate today = LocalDate.now();
+        AccountingPeriod currentPeriod = period("CURRENT", 6, "2025-26", AccountingPeriodType.REGULAR,
+                today.minusDays(5), today.plusDays(5));
+
+        when(accountingPeriodRepository.findByAccountingCalendarIdOrderByStartDateAsc(calendarId))
+                .thenReturn(List.of(currentPeriod));
+
+        PeriodStatus ps = periodStatus(currentPeriod, PeriodStatusEnum.CLOSED);
+        when(periodStatusRepository.findById(ps.getId())).thenReturn(Optional.of(ps));
+        when(periodStatusService.reopen(ps.getId(), "prashanth")).thenReturn(dummyResponse(PeriodStatusEnum.OPEN));
+
+        grantRole("GL_MANAGER");
+
+        service.reopen(ps.getId(), actingUserId, "prashanth", null);
+
+        verify(auditService, never()).log(any(), eq("period_status_reopen_reason"), any(), any(), any(), any());
+    }
+
+    @Test
+    void testReopenEndpoint_permanentlyClosed_rejects() {
+        AccountingPeriod requested = period("MAY-2025", 2, "2025-26", AccountingPeriodType.REGULAR,
+                LocalDate.of(2025, 5, 1), LocalDate.of(2025, 5, 31));
+        PeriodStatus ps = periodStatus(requested, PeriodStatusEnum.PERMANENTLY_CLOSED);
+        when(periodStatusRepository.findById(ps.getId())).thenReturn(Optional.of(ps));
+
+        assertThatThrownBy(() -> service.reopen(ps.getId(), actingUserId, "prashanth", "why not"))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "REOPEN_NOT_ALLOWED");
+
+        verify(periodStatusService, never()).reopen(any(), any());
+    }
+
+    @Test
+    void testReopenEndpoint_nonManager_rejects() {
+        LocalDate today = LocalDate.now();
+        AccountingPeriod currentPeriod = period("CURRENT", 6, "2025-26", AccountingPeriodType.REGULAR,
+                today.minusDays(5), today.plusDays(5));
+
+        when(accountingPeriodRepository.findByAccountingCalendarIdOrderByStartDateAsc(calendarId))
+                .thenReturn(List.of(currentPeriod));
+
+        PeriodStatus ps = periodStatus(currentPeriod, PeriodStatusEnum.CLOSED);
+        when(periodStatusRepository.findById(ps.getId())).thenReturn(Optional.of(ps));
+
+        grantRole("GL_ACCOUNTANT");
+
+        assertThatThrownBy(() -> service.reopen(ps.getId(), actingUserId, "prashanth", "why not"))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "MANAGER_ROLE_REQUIRED");
+
+        verify(periodStatusService, never()).reopen(any(), any());
     }
 
     // ---- Rule 7 — Permanent Close ----

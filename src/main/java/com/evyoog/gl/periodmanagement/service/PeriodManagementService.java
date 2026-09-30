@@ -1,6 +1,8 @@
 package com.evyoog.gl.periodmanagement.service;
 
 import com.evyoog.gl.auth.repository.UserRoleRepository;
+import com.evyoog.gl.common.audit.domain.AuditAction;
+import com.evyoog.gl.common.audit.service.AuditService;
 import com.evyoog.gl.common.exception.EvyoogException;
 import com.evyoog.gl.common.exception.ResourceNotFoundException;
 import com.evyoog.gl.period.domain.AccountingPeriod;
@@ -19,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -50,6 +53,7 @@ public class PeriodManagementService {
     private final UserRoleRepository userRoleRepository;
     private final LegalEntityPeriodConfigService configService;
     private final PeriodStatusService periodStatusService;
+    private final AuditService auditService;
 
     /**
      * Backs {@code POST /period-status/{id}/open}. A CLOSED period is a
@@ -62,10 +66,9 @@ public class PeriodManagementService {
         AccountingPeriod period = ps.getAccountingPeriod();
 
         if (ps.getStatus() == PeriodStatusEnum.CLOSED || ps.getStatus() == PeriodStatusEnum.PERMANENTLY_CLOSED) {
-            // validateReopen() itself rejects the PERMANENTLY_CLOSED case (Rule 6a) before
-            // periodStatusService.reopen() is ever called.
-            validateReopen(ps, period, actingUserId, legalEntityId);
-            return periodStatusService.reopen(periodStatusId, performedBy);
+            // Implicit reopen via the open() endpoint — same rules as the dedicated
+            // reopen() below, just with no reason to record.
+            return doReopen(ps, actingUserId, performedBy, null);
         }
 
         LegalEntityPeriodConfig config = configService.getOrDefault(legalEntityId);
@@ -76,6 +79,37 @@ public class PeriodManagementService {
         validateAdjustmentPeriodOpen(period, legalEntityId, actingUserId, config);
 
         return periodStatusService.open(periodStatusId, performedBy);
+    }
+
+    /**
+     * Backs the dedicated {@code POST /period-status/{id}/reopen} endpoint — Rule 6,
+     * explicit reopen with a caller-supplied {@code reason} recorded to the audit trail.
+     * Same guards as the implicit reopen inside {@link #open}; {@code performedBy} here
+     * is the request body's {@code reopenedBy} rather than the {@code X-User-Id} header,
+     * per this endpoint's own request shape.
+     */
+    @Transactional
+    public PeriodStatusResponse reopen(UUID periodStatusId, UUID actingUserId, String reopenedBy, String reason) {
+        PeriodStatus ps = findOrThrow(periodStatusId);
+        return doReopen(ps, actingUserId, reopenedBy, reason);
+    }
+
+    private PeriodStatusResponse doReopen(PeriodStatus ps, UUID actingUserId, String performedBy, String reason) {
+        UUID legalEntityId = ps.getLegalEntity().getId();
+        AccountingPeriod period = ps.getAccountingPeriod();
+
+        // validateReopen() itself rejects the PERMANENTLY_CLOSED case (Rule 6a) before
+        // periodStatusService.reopen() is ever called; a non-CLOSED, non-PERMANENTLY_CLOSED
+        // status (e.g. OPEN) falls through to periodStatusService.reopen()'s own
+        // INVALID_PERIOD_TRANSITION guard.
+        validateReopen(ps, period, actingUserId, legalEntityId);
+        PeriodStatusResponse response = periodStatusService.reopen(ps.getId(), performedBy);
+
+        if (reason != null && !reason.isBlank()) {
+            auditService.log(AuditAction.UPDATE, "period_status_reopen_reason", ps.getId(), null,
+                    Map.of("reason", reason), performedBy);
+        }
+        return response;
     }
 
     /** Backs {@code POST /period-status/{id}/close} — Rule 3b. */

@@ -5,6 +5,7 @@ import com.evyoog.gl.periodmanagement.service.PeriodManagementService;
 import com.evyoog.gl.periodstatus.domain.PeriodStatusEnum;
 import com.evyoog.gl.periodstatus.dto.CreatePeriodStatusRequest;
 import com.evyoog.gl.periodstatus.dto.PeriodStatusResponse;
+import com.evyoog.gl.periodstatus.dto.ReopenPeriodStatusRequest;
 import com.evyoog.gl.periodstatus.service.PeriodStatusService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -69,6 +70,18 @@ public class PeriodStatusController {
             @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId,
             Authentication authentication) {
         return ApiResponse.ok(periodManagementService.open(id, actingUserId(authentication), userId));
+    }
+
+    @PostMapping("/api/v1/gl/period-status/{id}/reopen")
+    @PreAuthorize("hasAuthority('gl:period:manage')")
+    @Operation(summary = "Reopen a CLOSED period back to OPEN (V33 Rule 6) — manager-or-above only, " +
+            "current fiscal year only, never for a PERMANENTLY_CLOSED period. Records the given reason to the audit trail.")
+    public ApiResponse<PeriodStatusResponse> reopen(
+            @PathVariable UUID id,
+            @Valid @RequestBody ReopenPeriodStatusRequest request,
+            Authentication authentication) {
+        return ApiResponse.ok(periodManagementService.reopen(
+                id, actingUserId(authentication), request.reopenedBy(), request.reason()));
     }
 
     @PostMapping("/api/v1/gl/period-status/{id}/future-enterable")
