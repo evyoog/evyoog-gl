@@ -84,9 +84,12 @@ class AccountingPeriodIT {
         UUID ledgerId = createLedger("LDG-" + suffix);
         UUID calendarId = createCalendar(ledgerId, 2025);
 
+        // 13: the 12 REGULAR periods of FY2025-26 plus the Adjustment Period
+        // (period 13) that AccountingCalendarService.create() now generates
+        // automatically for a brand-new calendar's first fiscal year (V33/V34).
         String response = mockMvc.perform(get("/api/v1/gl/accounting-calendars/{calendarId}/periods", calendarId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(12))
+                .andExpect(jsonPath("$.data.length()").value(13))
                 .andReturn().getResponse().getContentAsString();
 
         JsonNode data = objectMapper.readTree(response).at("/data");
@@ -94,10 +97,12 @@ class AccountingPeriodIT {
             assertThat(data.get(i).get("periodNumber").asInt()).isEqualTo(i + 1);
         }
 
+        // The Adjustment Period carries the same fiscalYear label ("2025-26") as
+        // the fiscal year it closes out, so it's included in this filtered count too.
         mockMvc.perform(get("/api/v1/gl/accounting-calendars/{calendarId}/periods", calendarId)
                         .param("fiscalYear", "2025-26"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(12));
+                .andExpect(jsonPath("$.data.length()").value(13));
 
         mockMvc.perform(get("/api/v1/gl/accounting-calendars/{calendarId}/periods", calendarId)
                         .param("fiscalYear", "2099-00"))
@@ -144,9 +149,11 @@ class AccountingPeriodIT {
                 .andExpect(jsonPath("$.data[0].name").value("APR-2026"))
                 .andExpect(jsonPath("$.data[0].fiscalYear").value("2026-27"));
 
+        // 25: 12 REGULAR (FY2025-26) + 1 Adjustment Period (auto-generated at
+        // calendar creation, V33/V34) + 12 REGULAR (FY2026-27, generate-next).
         mockMvc.perform(get("/api/v1/gl/accounting-calendars/{calendarId}/periods", calendarId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(24));
+                .andExpect(jsonPath("$.data.length()").value(25));
     }
 
     private UUID createCalendar(UUID ledgerId, int initialFiscalYear) throws Exception {

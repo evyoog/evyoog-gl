@@ -1950,3 +1950,67 @@ V31 migration: add missing WHO columns to 6 tables above
   `PeriodStatusIT` (5 tests) reverified green against a fresh Testcontainers
   DB with the new rules wired into `open`/`close`.
 - Next migration after V33 = V34.
+
+## V34 — Adjustment Period fiscal-year bug fix (September 2026)
+
+- **Bug**: V33's DISTINCT ON logic picked each calendar's LATEST fiscal year
+  (`ORDER BY end_date DESC`) for its auto-generated Adjustment Period. Wrong
+  whenever a calendar already has more than one fiscal year generated (e.g.
+  the next year pre-generated ahead of time) — the ADJ period belongs to the
+  EARLIEST/current fiscal year being closed, not one already sitting
+  pre-generated ahead of it. Caught on the live dev DB: Unicon's calendar
+  spans FY2026-27 and FY2027-28; V33 wrongly added `ADJ-2028` (fiscal_year
+  `2027-28`) instead of `ADJ-2027` (fiscal_year `2026-27`, right after
+  MAR-2027).
+- **V33 itself was NOT edited** — it had already applied for real via Flyway
+  against the live dev DB (confirmed via `flyway_schema_history`), and
+  changing its SQL now would change its checksum and break Flyway
+  validation on every environment that already ran it. **V34** is a pure,
+  idempotent data-fix migration instead: same `fy_ends`/`correct_fy` CTEs as
+  V33 but sorted `ASC` instead of `DESC`, first deleting whichever
+  ADJUSTMENT period doesn't belong to each calendar's earliest fiscal year,
+  then inserting the correct one if missing. Safe to run on a database where
+  V33 added nothing yet (both statements affect 0 rows).
+- **Root-cause fix for new calendars going forward**:
+  `AccountingPeriodService.generateAdjustmentPeriod(calendarId, fiscalYear,
+  performedBy)` (new method) is called from `AccountingCalendarService
+  .create()` right after a brand-new calendar's first fiscal year is
+  generated — so new calendars no longer depend on any migration backfill
+  at all. Deliberately NOT folded into `generatePeriodsForFiscalYear()`
+  itself, since that method is shared with `generateNextFiscalYear()`
+  (pre-generates a FUTURE fiscal year ahead of time) — an Adjustment Period
+  only ever belongs to the fiscal year currently being closed, never one
+  pre-generated in advance. Idempotent/self-guarding: no-ops if the fiscal
+  year already has an ADJUSTMENT period, has no REGULAR periods yet, or if
+  period 13 is already taken by a REGULAR period (a FISCAL_4_4_5 calendar,
+  which already runs 13 regular periods).
+- **Side effect on existing IT assertions (expected, not a regression)**:
+  `AccountingPeriodIT.getPeriodsByCalendar_returnsSortedList` and
+  `generateNextFiscalYear_extendsCalendar` asserted exact period counts (12
+  and 24) for a freshly-created calendar — now 13 and 25, since every new
+  calendar carries its Adjustment Period from creation onward. Updated both
+  assertions in lockstep; `AccountingCalendarIT`'s `generatedPeriodCount`
+  assertion needed no change since that field is built from the
+  `generatePeriodsForFiscalYear()` return list's own size (12), not a fresh
+  DB count, so it never included the separately-generated ADJ period.
+- **Full IT suite run** (`mvn verify -DskipITs=false`, all ~34
+  Testcontainers-based classes): 3 pre-existing failures
+  (`ApprovalPolicyControllerIT`, `UserControllerIT`, `RoleControllerIT`) and
+  1 Hikari connection-timeout error were transient Testcontainers-under-load
+  flakiness from running ~34 Postgres containers back-to-back — confirmed
+  by re-running just those 4 classes in isolation, where all pass (matches
+  the exact precedent already documented for the Account Combination
+  Registry session). `FinanceDimensionIT.createThickLedgerDimensions_
+  upToFifteen` fails consistently even in isolation, but pre-dates this
+  session (broken by the duplicate-DimensionType-per-ledger validation
+  added in an earlier commit — a THICK ledger can only have 8 distinct
+  `DimensionType` values total, so a test creating 15 same-typed dimensions
+  can never pass under that rule) — untouched by this session, flagging for
+  whoever owns Finance Dimension next.
+- Test count: 460 unit tests (454 prior + 6 new: 5 in
+  `AccountingPeriodServiceTest` covering `generateAdjustmentPeriod`, 1 in
+  `AccountingCalendarServiceTest` verifying the new wiring),
+  `mvn test -DskipITs` green against the live dev DB (real V34 Flyway
+  application). `AccountingCalendarIT`/`PeriodStatusIT`/`AccountingPeriodIT`
+  (13 tests) reverified green against a fresh Testcontainers DB.
+- Next migration after V34 = V35.

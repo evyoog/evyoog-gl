@@ -78,6 +78,11 @@ public class AccountingCalendarService {
                 saved.getId(), initialFiscalYear, performedBy);
         String fiscalYearName = accountingPeriodService.deriveFiscalYearName(fiscalYearStartMonth, initialFiscalYear);
 
+        // V33/V34 Period Management Controls — every new calendar gets its first fiscal
+        // year's Adjustment Period generated up front, rather than relying on a one-time
+        // migration backfill (see AccountingPeriodService.generateAdjustmentPeriod javadoc).
+        accountingPeriodService.generateAdjustmentPeriod(saved.getId(), fiscalYearName, performedBy);
+
         AccountingCalendarResponse response = mapper.toResponse(saved).withGeneratedInfo(periods.size(), fiscalYearName);
 
         auditService.log(AuditAction.CREATE, "accounting_calendar", saved.getId(), null, response, performedBy);

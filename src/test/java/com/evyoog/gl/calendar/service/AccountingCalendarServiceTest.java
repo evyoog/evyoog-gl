@@ -96,6 +96,31 @@ class AccountingCalendarServiceTest {
     }
 
     @Test
+    void createCalendar_success_generatesAdjustmentPeriodForFirstFiscalYear() {
+        Ledger ledger = ledger();
+        CreateCalendarRequest request = new CreateCalendarRequest(ledger.getId(), "FY Calendar", null,
+                null, null, null, 2025);
+        AccountingCalendar entity = new AccountingCalendar();
+        AccountingCalendar saved = AccountingCalendar.builder().name("FY Calendar").ledger(ledger).build();
+        saved.setId(UUID.randomUUID());
+
+        when(ledgerRepository.findById(ledger.getId())).thenReturn(Optional.of(ledger));
+        when(repository.existsByLedgerIdAndIsActiveTrue(ledger.getId())).thenReturn(false);
+        when(legalEntityLedgerRepository.findByLedgerId(ledger.getId())).thenReturn(List.of());
+        when(mapper.toEntity(request)).thenReturn(entity);
+        when(repository.saveAndFlush(entity)).thenReturn(saved);
+        when(accountingPeriodService.generatePeriodsForFiscalYear(eq(saved.getId()), eq(2025), any()))
+                .thenReturn(twelvePeriods());
+        when(accountingPeriodService.deriveFiscalYearName(4, 2025)).thenReturn("2025-26");
+        when(mapper.toResponse(saved)).thenReturn(responseFor(saved));
+
+        service.create(request, "prashanth");
+
+        org.mockito.Mockito.verify(accountingPeriodService)
+                .generateAdjustmentPeriod(saved.getId(), "2025-26", "prashanth");
+    }
+
+    @Test
     void createCalendar_duplicateForSameLedger_throws409() {
         Ledger ledger = ledger();
         CreateCalendarRequest request = new CreateCalendarRequest(ledger.getId(), "FY Calendar", null,

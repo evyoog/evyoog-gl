@@ -208,4 +208,107 @@ class AccountingPeriodServiceTest {
         assertThat(periods.get(0).getName()).isEqualTo("APR-2026");
         assertThat(periods.get(0).getFiscalYear()).isEqualTo("2026-27");
     }
+
+    // ---- generateAdjustmentPeriod() — V33/V34 ----
+
+    private AccountingPeriod regularPeriod(int periodNumber, LocalDate start, LocalDate end) {
+        AccountingPeriod p = AccountingPeriod.builder()
+                .name(start.getMonth() + "-" + start.getYear())
+                .periodNumber(periodNumber)
+                .fiscalYear("2025-26")
+                .periodType(com.evyoog.gl.period.domain.AccountingPeriodType.REGULAR)
+                .quarterNumber((periodNumber - 1) / 3 + 1)
+                .startDate(start)
+                .endDate(end)
+                .build();
+        p.setId(UUID.randomUUID());
+        return p;
+    }
+
+    @Test
+    void generateAdjustmentPeriod_success_createsAdjPeriodRightAfterLastRegular() {
+        AccountingCalendar calendar = calendar(4, 1, PeriodType.MONTHLY);
+        AccountingPeriod marPeriod = regularPeriod(12, LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 31));
+
+        when(accountingCalendarRepository.findById(calendar.getId())).thenReturn(Optional.of(calendar));
+        when(repository.findByAccountingCalendarIdAndFiscalYearAndPeriodType(
+                calendar.getId(), "2025-26", com.evyoog.gl.period.domain.AccountingPeriodType.ADJUSTMENT))
+                .thenReturn(Optional.empty());
+        when(repository.findByAccountingCalendarIdAndFiscalYearAndPeriodNumber(calendar.getId(), "2025-26", 13))
+                .thenReturn(Optional.empty());
+        when(repository.findByAccountingCalendarIdAndFiscalYearOrderByStartDateAsc(calendar.getId(), "2025-26"))
+                .thenReturn(List.of(marPeriod));
+        stubSaveAndAudit();
+
+        Optional<AccountingPeriod> result = service.generateAdjustmentPeriod(calendar.getId(), "2025-26", "prashanth");
+
+        assertThat(result).isPresent();
+        AccountingPeriod adj = result.get();
+        assertThat(adj.getName()).isEqualTo("ADJ-2026");
+        assertThat(adj.getPeriodNumber()).isEqualTo(13);
+        assertThat(adj.getFiscalYear()).isEqualTo("2025-26");
+        assertThat(adj.getPeriodType()).isEqualTo(com.evyoog.gl.period.domain.AccountingPeriodType.ADJUSTMENT);
+        assertThat(adj.getStartDate()).isEqualTo(LocalDate.of(2026, 4, 1));
+        assertThat(adj.getEndDate()).isEqualTo(LocalDate.of(2026, 4, 15));
+    }
+
+    @Test
+    void generateAdjustmentPeriod_alreadyExists_returnsEmptyAndDoesNotSave() {
+        AccountingCalendar calendar = calendar(4, 1, PeriodType.MONTHLY);
+        AccountingPeriod existingAdj = regularPeriod(13, LocalDate.of(2026, 4, 1), LocalDate.of(2026, 4, 15));
+
+        when(accountingCalendarRepository.findById(calendar.getId())).thenReturn(Optional.of(calendar));
+        when(repository.findByAccountingCalendarIdAndFiscalYearAndPeriodType(
+                calendar.getId(), "2025-26", com.evyoog.gl.period.domain.AccountingPeriodType.ADJUSTMENT))
+                .thenReturn(Optional.of(existingAdj));
+
+        Optional<AccountingPeriod> result = service.generateAdjustmentPeriod(calendar.getId(), "2025-26", "prashanth");
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void generateAdjustmentPeriod_periodNumber13AlreadyTakenByRegular_returnsEmpty() {
+        AccountingCalendar calendar = calendar(4, 1, PeriodType.FISCAL_4_4_5);
+        AccountingPeriod p13 = regularPeriod(13, LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 28));
+
+        when(accountingCalendarRepository.findById(calendar.getId())).thenReturn(Optional.of(calendar));
+        when(repository.findByAccountingCalendarIdAndFiscalYearAndPeriodType(
+                calendar.getId(), "2025-26", com.evyoog.gl.period.domain.AccountingPeriodType.ADJUSTMENT))
+                .thenReturn(Optional.empty());
+        when(repository.findByAccountingCalendarIdAndFiscalYearAndPeriodNumber(calendar.getId(), "2025-26", 13))
+                .thenReturn(Optional.of(p13));
+
+        Optional<AccountingPeriod> result = service.generateAdjustmentPeriod(calendar.getId(), "2025-26", "prashanth");
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void generateAdjustmentPeriod_noRegularPeriodsYet_returnsEmpty() {
+        AccountingCalendar calendar = calendar(4, 1, PeriodType.MONTHLY);
+
+        when(accountingCalendarRepository.findById(calendar.getId())).thenReturn(Optional.of(calendar));
+        when(repository.findByAccountingCalendarIdAndFiscalYearAndPeriodType(
+                calendar.getId(), "2025-26", com.evyoog.gl.period.domain.AccountingPeriodType.ADJUSTMENT))
+                .thenReturn(Optional.empty());
+        when(repository.findByAccountingCalendarIdAndFiscalYearAndPeriodNumber(calendar.getId(), "2025-26", 13))
+                .thenReturn(Optional.empty());
+        when(repository.findByAccountingCalendarIdAndFiscalYearOrderByStartDateAsc(calendar.getId(), "2025-26"))
+                .thenReturn(List.of());
+
+        Optional<AccountingPeriod> result = service.generateAdjustmentPeriod(calendar.getId(), "2025-26", "prashanth");
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void generateAdjustmentPeriod_calendarNotFound_throws() {
+        UUID calendarId = UUID.randomUUID();
+        when(accountingCalendarRepository.findById(calendarId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.generateAdjustmentPeriod(calendarId, "2025-26", "prashanth"))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "CALENDAR_NOT_FOUND");
+    }
 }

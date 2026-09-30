@@ -24,6 +24,7 @@ import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -90,6 +91,73 @@ public class AccountingPeriodService {
 
         int nextFiscalYear = latest.getEndDate().plusDays(1).getYear();
         return generatePeriodsForFiscalYear(calendarId, nextFiscalYear, performedBy);
+    }
+
+    /**
+     * V33/V34 Period Management Controls — generates the Adjustment Period
+     * (period 13, a 2-week window right after the fiscal year's last REGULAR
+     * period) for a given fiscal year. Called once from
+     * {@code AccountingCalendarService.create()} right after the calendar's
+     * FIRST fiscal year is generated, so every NEW calendar gets its
+     * Adjustment Period automatically going forward — V33/V34's SQL-level
+     * backfill only ever had to cover calendars that pre-date this method.
+     *
+     * <p>Deliberately NOT folded into {@link #generatePeriodsForFiscalYear}
+     * itself: that method is shared with {@link #generateNextFiscalYear},
+     * which pre-generates a FUTURE fiscal year's periods ahead of time (e.g.
+     * a calendar that already has both FY2026-27 and FY2027-28) — an
+     * Adjustment Period only ever belongs to the fiscal year currently being
+     * closed, not to one pre-generated in advance.
+     *
+     * <p>Idempotent and self-guarding: returns empty if this fiscal year
+     * already has an ADJUSTMENT period, if no REGULAR periods exist for it
+     * yet, or if period number 13 is already taken by a REGULAR period
+     * (e.g. a FISCAL_4_4_5 calendar, which already runs 13 regular periods
+     * and has no room left for one).
+     */
+    @Transactional
+    public Optional<AccountingPeriod> generateAdjustmentPeriod(UUID calendarId, String fiscalYear, String performedBy) {
+        AccountingCalendar calendar = accountingCalendarRepository.findById(calendarId)
+                .orElseThrow(() -> new EvyoogException("CALENDAR_NOT_FOUND",
+                        "Accounting Calendar not found.", HttpStatus.NOT_FOUND));
+
+        if (repository.findByAccountingCalendarIdAndFiscalYearAndPeriodType(
+                calendarId, fiscalYear, AccountingPeriodType.ADJUSTMENT).isPresent()) {
+            return Optional.empty();
+        }
+        if (repository.findByAccountingCalendarIdAndFiscalYearAndPeriodNumber(calendarId, fiscalYear, 13).isPresent()) {
+            return Optional.empty(); // period 13 already taken by a REGULAR period (e.g. FISCAL_4_4_5)
+        }
+
+        List<AccountingPeriod> regularPeriods = repository
+                .findByAccountingCalendarIdAndFiscalYearOrderByStartDateAsc(calendarId, fiscalYear).stream()
+                .filter(p -> p.getPeriodType() == AccountingPeriodType.REGULAR)
+                .toList();
+        if (regularPeriods.isEmpty()) {
+            return Optional.empty();
+        }
+
+        AccountingPeriod lastRegular = regularPeriods.get(regularPeriods.size() - 1);
+        LocalDate start = lastRegular.getEndDate().plusDays(1);
+        LocalDate end = start.plusDays(14);
+
+        AccountingPeriod adjustment = AccountingPeriod.builder()
+                .accountingCalendar(calendar)
+                .name("ADJ-" + start.getYear())
+                .periodNumber(13)
+                .fiscalYear(fiscalYear)
+                .periodType(AccountingPeriodType.ADJUSTMENT)
+                .quarterNumber(4)
+                .startDate(start)
+                .endDate(end)
+                .createdBy(performedBy)
+                .updatedBy(performedBy)
+                .build();
+
+        AccountingPeriod saved = repository.saveAndFlush(adjustment);
+        auditService.log(AuditAction.CREATE, "accounting_period", saved.getId(), null,
+                mapper.toResponse(saved), performedBy);
+        return Optional.of(saved);
     }
 
     @Transactional(readOnly = true)
