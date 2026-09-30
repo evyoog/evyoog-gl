@@ -2077,3 +2077,36 @@ V31 migration: add missing WHO columns to 6 tables above
   `FinanceDimensionService`'s `MAX_DIMENSIONS = 15` constant alone.
 - Verified `FinanceDimensionIT` in isolation: 3/3 green.
   Unit test count unchanged (464) — this was an IT-only fix.
+
+## Rule 1 "not enforced" report (September 2026) — false alarm, confirmed via new IT test
+
+- **Investigated, not reproduced**: `PeriodStatusController` was already
+  routing `/open`, `/close`, `/reopen` and `/permanently-close` entirely
+  through `PeriodManagementService` — confirmed by re-reading the file, not
+  by assumption. There is no direct `PeriodStatusService.open()`/`close()`
+  call left in the controller for any of these four endpoints.
+- Added `PeriodStatusIT.testMaxOpenPeriods_thirdPeriodRejected` — a genuine
+  end-to-end test (real HTTP → controller → `PeriodManagementService` →
+  real Postgres via Testcontainers, not a Mockito mock) that opens 2
+  periods successfully, then asserts the 3rd returns
+  `409 MAX_OPEN_PERIODS_EXCEEDED` with message containing exactly
+  "Maximum open periods limit (2) reached". **Passes.** This is the
+  strongest possible proof against a controller-wiring bug — a Mockito
+  unit test can't catch a "wrong service called" bug the way a real HTTP
+  round-trip can.
+- No `gl.legal_entity_period_config` row exists for a Legal Entity created
+  via this test's own API calls (only pre-existing LEs got seeded rows in
+  V33), so this also exercises `PeriodManagementService.getOrDefault()`'s
+  fallback default (`max_open_periods=2`) — the same value the report says
+  was configured for Unicon.
+- **Most likely explanation for what was actually observed**: a stale
+  running `spring-boot:run` process serving pre-fix compiled classes —
+  this is the exact same class of issue already documented above under
+  "V30a — Stale process note" ("Root cause: spring-boot:run was serving
+  pre-V30a compiled classes... Always restart backend after adding new
+  fields to entities/DTOs"). Whoever verified this live should restart
+  `mvn spring-boot:run` against a fresh `mvn clean package` before
+  re-testing.
+- Test count: 464 unit tests (unchanged — the new test is IT-only).
+  `PeriodStatusIT` now 6 tests (was 5), all green against a fresh
+  Testcontainers DB.
