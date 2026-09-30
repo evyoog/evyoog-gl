@@ -1,6 +1,14 @@
 package com.evyoog.gl.periodstatus.api;
 
+import com.evyoog.gl.auth.domain.Role;
+import com.evyoog.gl.auth.domain.User;
+import com.evyoog.gl.auth.domain.UserRole;
+import com.evyoog.gl.auth.repository.RoleRepository;
+import com.evyoog.gl.auth.repository.UserRepository;
+import com.evyoog.gl.auth.repository.UserRoleRepository;
+import com.evyoog.gl.auth.service.JwtService;
 import com.evyoog.gl.common.exception.EvyoogException;
+import com.evyoog.gl.enterprise.repository.LegalEntityRepository;
 import com.evyoog.gl.periodstatus.service.PeriodStatusService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,6 +28,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -56,6 +65,17 @@ class PeriodStatusIT {
 
     @Autowired
     private PeriodStatusService periodStatusService;
+
+    @Autowired
+    private JwtService jwtService;
+    @Autowired
+    private UserRepository userRepository;
+    @Autowired
+    private RoleRepository roleRepository;
+    @Autowired
+    private UserRoleRepository userRoleRepository;
+    @Autowired
+    private LegalEntityRepository legalEntityRepository;
 
     @Test
     void testFullLifecycle_notOpened_open_close_lock() throws Exception {
@@ -208,11 +228,103 @@ class PeriodStatusIT {
                 .andExpect(jsonPath("$.message").value(containsString("Maximum open periods limit (2) reached")));
     }
 
+    /**
+     * Bug fix regression test (September 2026): reopening a CLOSED period via
+     * {@code /open} used to branch straight into {@code doReopen()} without ever
+     * calling {@code validateMaxOpenPeriods()} — so a caller at the max-open-periods
+     * limit could silently exceed it by reopening a previously-closed period instead
+     * of opening a fresh one. This reproduces that exact shape end to end (real HTTP
+     * -> PeriodManagementService -> real Postgres): two periods legitimately open,
+     * then a third period reopened from CLOSED must still be rejected by Rule 1.
+     *
+     * <p>Reopen requires the caller to resolve as GL_MANAGER-or-above via a real
+     * {@code auth.user_roles} row (the shared {@code TestJwtMockMvcCustomizer}
+     * superuser token has no such row — see the documented "Known IT gap" in
+     * CLAUDE.md), so this test seeds one and issues its own Authorization header.
+     */
+    @Test
+    void testMaxOpenPeriods_reopenBypass_rejectsWhenAtLimit() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        UUID legalEntityId = createThickEsLegalEntity(suffix);
+        UUID ledgerId = createLedger("LDG-" + suffix, "THICK");
+        assignPrimaryLedger(legalEntityId, ledgerId);
+        // Rule 6's isCurrentFiscalYear() (unlike Rule 2) requires a period whose date
+        // range actually contains today, or reopen rejects with REOPEN_PRIOR_FISCAL_YEAR
+        // before Rule 1 is ever reached — use the fiscal year that brackets the real
+        // "today" (2026), not the fixed 2025 most other tests in this file use.
+        List<UUID> periodIds = createPeriods(ledgerId, suffix, 2026);
+        String managerAuthHeader = seedManagerAndBuildAuthHeader(legalEntityId);
+
+        UUID period1Status = createPeriodStatus(legalEntityId, periodIds.get(0));
+        UUID period2Status = createPeriodStatus(legalEntityId, periodIds.get(1));
+        UUID period3Status = createPeriodStatus(legalEntityId, periodIds.get(2));
+
+        // Open period 1, open period 2 (2 open, at the default limit), close period 1
+        // (no prior periods, so the closing-sequence check is a no-op) — leaves only
+        // period 2 OPEN (1 open), period 1 CLOSED.
+        mockMvc.perform(post("/api/v1/gl/period-status/{id}/open", period1Status))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/gl/period-status/{id}/open", period2Status))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/gl/period-status/{id}/close", period1Status))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CLOSED"));
+
+        // Open period 3 fresh (sequence: period 2 is OPEN, satisfies Rule 3a). Rule 1
+        // sees count=1 (only period 2), allows it — now 2 open again (periods 2 and 3).
+        mockMvc.perform(post("/api/v1/gl/period-status/{id}/open", period3Status)
+                        .header("Authorization", managerAuthHeader))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("OPEN"));
+
+        // Reopening period 1 (CLOSED) via /open must still be rejected by Rule 1 —
+        // periods 2 and 3 are already open, at the max_open_periods=2 default limit.
+        mockMvc.perform(post("/api/v1/gl/period-status/{id}/open", period1Status)
+                        .header("Authorization", managerAuthHeader))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("MAX_OPEN_PERIODS_EXCEEDED"))
+                .andExpect(jsonPath("$.message").value(containsString("Maximum open periods limit (2) reached")));
+
+        // Same bug, same fix, via the dedicated /reopen endpoint.
+        mockMvc.perform(post("/api/v1/gl/period-status/{id}/reopen", period1Status)
+                        .header("Authorization", managerAuthHeader)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "reopenedBy", "prashanth", "reason", "testing"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("MAX_OPEN_PERIODS_EXCEEDED"));
+    }
+
+    private String seedManagerAndBuildAuthHeader(UUID legalEntityId) {
+        Role managerRole = roleRepository.findByCode("GL_MANAGER")
+                .orElseThrow(() -> new IllegalStateException("GL_MANAGER role not seeded"));
+
+        User user = userRepository.save(User.builder()
+                .email("it-manager-" + UUID.randomUUID() + "@evyoog.test")
+                .fullName("IT Manager")
+                .passwordHash("not-used-in-this-test")
+                .build());
+
+        userRoleRepository.save(UserRole.builder()
+                .user(user)
+                .role(managerRole)
+                .legalEntity(legalEntityRepository.getReferenceById(legalEntityId))
+                .assignedBy("SYSTEM")
+                .build());
+
+        String token = jwtService.generateAccessToken(user, legalEntityId, Set.of("gl:period:manage", "gl:period:view"));
+        return "Bearer " + token;
+    }
+
     private List<UUID> createPeriods(UUID ledgerId, String suffix) throws Exception {
+        return createPeriods(ledgerId, suffix, 2025);
+    }
+
+    private List<UUID> createPeriods(UUID ledgerId, String suffix, int initialFiscalYear) throws Exception {
         Map<String, Object> calendarRequest = new HashMap<>();
         calendarRequest.put("ledgerId", ledgerId.toString());
         calendarRequest.put("name", "FY Calendar " + suffix);
-        calendarRequest.put("initialFiscalYear", 2025);
+        calendarRequest.put("initialFiscalYear", initialFiscalYear);
 
         String response = mockMvc.perform(post("/api/v1/gl/accounting-calendars")
                         .contentType(MediaType.APPLICATION_JSON)

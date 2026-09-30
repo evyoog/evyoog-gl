@@ -15,6 +15,7 @@ import com.evyoog.gl.periodstatus.dto.PeriodStatusResponse;
 import com.evyoog.gl.periodstatus.repository.PeriodStatusRepository;
 import com.evyoog.gl.periodstatus.service.PeriodStatusService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +45,7 @@ import java.util.UUID;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class PeriodManagementService {
 
     private static final Set<String> MANAGER_OR_ABOVE_ROLES = Set.of("SYS_ADMIN", "GL_MANAGER");
@@ -103,6 +105,15 @@ public class PeriodManagementService {
         // status (e.g. OPEN) falls through to periodStatusService.reopen()'s own
         // INVALID_PERIOD_TRANSITION guard.
         validateReopen(ps, period, actingUserId, legalEntityId);
+
+        // Bug fix (September 2026): reopening a CLOSED period puts it back into OPEN
+        // just like a fresh open does, so it must count against Rule 1 exactly the same
+        // way — a reopen used to skip straight from open()'s CLOSED/PERMANENTLY_CLOSED
+        // branch into doReopen() without ever calling validateMaxOpenPeriods(), letting a
+        // caller silently exceed max_open_periods by reopening instead of opening fresh.
+        LegalEntityPeriodConfig config = configService.getOrDefault(legalEntityId);
+        validateMaxOpenPeriods(legalEntityId, config);
+
         PeriodStatusResponse response = periodStatusService.reopen(ps.getId(), performedBy);
 
         if (reason != null && !reason.isBlank()) {
@@ -141,6 +152,8 @@ public class PeriodManagementService {
 
     private void validateMaxOpenPeriods(UUID legalEntityId, LegalEntityPeriodConfig config) {
         long openCount = periodStatusRepository.countByLegalEntityIdAndStatus(legalEntityId, PeriodStatusEnum.OPEN);
+        log.debug("Rule 1 (max open periods): legalEntityId={}, currentOpenCount={}, maxOpenPeriods={}",
+                legalEntityId, openCount, config.getMaxOpenPeriods());
         if (openCount >= config.getMaxOpenPeriods()) {
             throw new EvyoogException("MAX_OPEN_PERIODS_EXCEEDED",
                     "Maximum open periods limit (" + config.getMaxOpenPeriods() +

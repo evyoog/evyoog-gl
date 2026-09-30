@@ -2110,3 +2110,49 @@ V31 migration: add missing WHO columns to 6 tables above
 - Test count: 464 unit tests (unchanged — the new test is IT-only).
   `PeriodStatusIT` now 6 tests (was 5), all green against a fresh
   Testcontainers DB.
+
+## Rule 1 reopen-path bypass — real bug, fixed (September 2026)
+
+- **Confirmed, genuine bug** (not a false alarm this time): `open()`'s
+  implicit-reopen branch — a CLOSED or PERMANENTLY_CLOSED period status
+  routes straight to `doReopen()` — called `validateReopen()` (Rule 6) but
+  never `validateMaxOpenPeriods()` (Rule 1). Reopening a CLOSED period puts
+  it back into OPEN exactly like a fresh open does, so it must count
+  against the same limit — it didn't. A caller already at
+  `max_open_periods` could silently exceed it by reopening a previously
+  closed period instead of opening a fresh NOT_OPENED one. This is the
+  exact, reproducible root cause of "APR-2026 + MAY-2026 + JUN-2026 all
+  OPEN simultaneously" — one of those three was a reopened CLOSED period,
+  not a fresh open, and that's the call that skipped Rule 1.
+- The regular (non-reopen) open path was NOT independently buggy — it
+  already calls `validateMaxOpenPeriods()` first thing, before every other
+  rule, and `PeriodManagementServiceTest.testMaxOpenPeriods_exceedsLimit_
+  rejects` already covered it. So there was only ever one bug here (the
+  reopen branch), not two — the report's "check why the fresh NOT_OPENED
+  open also succeeded" concern was almost certainly this same reopen call
+  observed live and misread as a fresh open.
+- **Fix**: `validateMaxOpenPeriods()` is now called inside `doReopen()`
+  itself (after `validateReopen()`'s permanently-closed/fiscal-year/manager
+  checks, before `periodStatusService.reopen()` actually mutates the row),
+  so both the implicit reopen-via-`/open` path and the dedicated
+  `/reopen` endpoint share the same one check — no duplicated logic
+  between the two callers.
+- Added `log.debug(...)` inside `validateMaxOpenPeriods()` logging
+  `legalEntityId`, the live open count, and the configured limit (enable
+  via `logging.level.com.evyoog.gl.periodmanagement=DEBUG`) — this is
+  intentionally left in as a permanent, low-noise diagnostic for this rule,
+  not a one-off temporary trace.
+- Verified two ways: 2 new `PeriodManagementServiceTest` unit tests
+  (`testReopen_viaOpen_maxOpenPeriodsExceeded_rejects`,
+  `testReopenEndpoint_maxOpenPeriodsExceeded_rejects`) and 1 new
+  `PeriodStatusIT.testMaxOpenPeriods_reopenBypass_rejectsWhenAtLimit` —
+  real HTTP, real Postgres via Testcontainers, seeding an actual
+  `auth.user_roles` GL_MANAGER row (see the "Known IT gap" note above —
+  the shared superuser JWT has no such row, so this test builds and uses
+  its own `Authorization` header via `JwtService.generateAccessToken`).
+  The IT reproduces the exact reported shape (2 periods legitimately open,
+  then a third opened by reopening a CLOSED one) and confirms both
+  `/open` and `/reopen` now correctly return `409 MAX_OPEN_PERIODS_EXCEEDED`.
+- Test count: 466 unit tests (464 prior + 2 new), `mvn test -DskipITs`
+  green against the live dev DB. `PeriodStatusIT` now 7 tests (was 6), all
+  green against a fresh Testcontainers DB.

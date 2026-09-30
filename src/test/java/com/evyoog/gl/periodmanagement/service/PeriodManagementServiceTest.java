@@ -418,6 +418,54 @@ class PeriodManagementServiceTest {
         verify(periodStatusService).reopen(ps.getId(), "prashanth");
     }
 
+    @Test
+    void testReopen_viaOpen_maxOpenPeriodsExceeded_rejects() {
+        // Bug fix regression test: reopening a CLOSED period through the /open endpoint
+        // must be counted against Rule 1 exactly like a fresh open — it used to bypass
+        // validateMaxOpenPeriods() entirely by branching straight into doReopen().
+        LocalDate today = LocalDate.now();
+        AccountingPeriod currentPeriod = period("CURRENT", 6, "2025-26", AccountingPeriodType.REGULAR,
+                today.minusDays(5), today.plusDays(5));
+
+        when(accountingPeriodRepository.findByAccountingCalendarIdOrderByStartDateAsc(calendarId))
+                .thenReturn(List.of(currentPeriod));
+
+        PeriodStatus ps = periodStatus(currentPeriod, PeriodStatusEnum.CLOSED);
+        when(periodStatusRepository.findById(ps.getId())).thenReturn(Optional.of(ps));
+        when(periodStatusRepository.countByLegalEntityIdAndStatus(legalEntityId, PeriodStatusEnum.OPEN)).thenReturn(2L);
+
+        grantRole("GL_MANAGER");
+
+        assertThatThrownBy(() -> service.open(ps.getId(), actingUserId, "prashanth"))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "MAX_OPEN_PERIODS_EXCEEDED");
+
+        verify(periodStatusService, never()).reopen(any(), any());
+    }
+
+    @Test
+    void testReopenEndpoint_maxOpenPeriodsExceeded_rejects() {
+        // Same bug, exercised via the dedicated /reopen endpoint.
+        LocalDate today = LocalDate.now();
+        AccountingPeriod currentPeriod = period("CURRENT", 6, "2025-26", AccountingPeriodType.REGULAR,
+                today.minusDays(5), today.plusDays(5));
+
+        when(accountingPeriodRepository.findByAccountingCalendarIdOrderByStartDateAsc(calendarId))
+                .thenReturn(List.of(currentPeriod));
+
+        PeriodStatus ps = periodStatus(currentPeriod, PeriodStatusEnum.CLOSED);
+        when(periodStatusRepository.findById(ps.getId())).thenReturn(Optional.of(ps));
+        when(periodStatusRepository.countByLegalEntityIdAndStatus(legalEntityId, PeriodStatusEnum.OPEN)).thenReturn(2L);
+
+        grantRole("GL_MANAGER");
+
+        assertThatThrownBy(() -> service.reopen(ps.getId(), actingUserId, "prashanth", "Late invoice correction"))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "MAX_OPEN_PERIODS_EXCEEDED");
+
+        verify(periodStatusService, never()).reopen(any(), any());
+    }
+
     // ---- Rule 6 — dedicated reopen(id, actingUserId, reopenedBy, reason) endpoint ----
 
     @Test
