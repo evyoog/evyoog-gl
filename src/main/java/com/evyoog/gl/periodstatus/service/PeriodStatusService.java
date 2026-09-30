@@ -36,12 +36,22 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class PeriodStatusService {
 
+    /**
+     * NOTE: CLOSED -> OPEN (reopen) is deliberately NOT modelled here — it would
+     * make {@link #open(UUID, String)} silently accept reopening a CLOSED period
+     * with none of the V33 Rule 6 guards (manager-or-above, current-fiscal-year-
+     * only, not-permanently-closed). Reopening has its own dedicated method,
+     * {@link #reopen(UUID, String)}, called only from
+     * {@code PeriodManagementService} after those guards pass. Existing OPEN/
+     * CLOSED/LOCKED transitions and their tests are unchanged by V33.
+     */
     private static final Map<PeriodStatusEnum, Set<PeriodStatusEnum>> VALID_TRANSITIONS = Map.of(
             PeriodStatusEnum.NOT_OPENED, Set.of(PeriodStatusEnum.FUTURE_ENTERABLE, PeriodStatusEnum.OPEN),
             PeriodStatusEnum.FUTURE_ENTERABLE, Set.of(PeriodStatusEnum.OPEN),
             PeriodStatusEnum.OPEN, Set.of(PeriodStatusEnum.CLOSED),
-            PeriodStatusEnum.CLOSED, Set.of(PeriodStatusEnum.LOCKED),
-            PeriodStatusEnum.LOCKED, Set.of()
+            PeriodStatusEnum.CLOSED, Set.of(PeriodStatusEnum.LOCKED, PeriodStatusEnum.PERMANENTLY_CLOSED),
+            PeriodStatusEnum.LOCKED, Set.of(),
+            PeriodStatusEnum.PERMANENTLY_CLOSED, Set.of()
     );
 
     private final PeriodStatusRepository repository;
@@ -118,6 +128,49 @@ public class PeriodStatusService {
     }
 
     /**
+     * V33 Rule 7 — finalise a CLOSED period so it can never be posted to or
+     * reopened again. Goes through the same {@link #transition(UUID, PeriodStatusEnum, String)}
+     * gate as every other transition, so only a CLOSED period may be
+     * permanently closed (see {@code VALID_TRANSITIONS}); {@code PeriodManagementService}
+     * additionally checks for the already-PERMANENTLY_CLOSED case up front to
+     * surface a domain-specific error code instead of the generic
+     * INVALID_PERIOD_TRANSITION.
+     */
+    @Transactional
+    public PeriodStatusResponse permanentlyClose(UUID id, String performedBy) {
+        return transition(id, PeriodStatusEnum.PERMANENTLY_CLOSED, performedBy);
+    }
+
+    /**
+     * V33 Rule 6 — reopen a CLOSED period back to OPEN. Deliberately bypasses
+     * {@code VALID_TRANSITIONS}/{@link #transition(UUID, PeriodStatusEnum, String)}
+     * (see the comment on that map) — all of Rule 6's guards (manager-or-above,
+     * current-fiscal-year-only, not-permanently-closed) are enforced by
+     * {@code PeriodManagementService} before this is called.
+     */
+    @Transactional
+    public PeriodStatusResponse reopen(UUID id, String performedBy) {
+        PeriodStatus ps = findOrThrow(id);
+        Ledger ledger = resolveLedger(ps.getLegalEntity().getId());
+        rejectEventOnly(ledger);
+
+        if (ps.getStatus() != PeriodStatusEnum.CLOSED) {
+            throw new EvyoogException("INVALID_PERIOD_TRANSITION",
+                    "Cannot reopen period from status " + ps.getStatus() + ". Only a CLOSED period can be reopened.");
+        }
+
+        PeriodStatusResponse before = mapper.toResponse(ps);
+        ps.setStatus(PeriodStatusEnum.OPEN);
+        ps.setOpenedAt(Instant.now());
+        ps.setOpenedBy(performedBy);
+        ps.setUpdatedBy(performedBy);
+
+        PeriodStatus saved = repository.saveAndFlush(ps);
+        auditService.log(AuditAction.UPDATE, "period_status", saved.getId(), before, mapper.toResponse(saved), performedBy);
+        return mapper.toResponse(saved);
+    }
+
+    /**
      * Called by GL-15's Posting Engine before every journal post. EVENT_ONLY
      * Ledgers skip the gate entirely (Phase 1 has no period control for them).
      */
@@ -189,7 +242,7 @@ public class PeriodStatusService {
                 ps.setLockedAt(now);
                 ps.setLockedBy(performedBy);
             }
-            case FUTURE_ENTERABLE, NOT_OPENED -> {
+            case FUTURE_ENTERABLE, NOT_OPENED, PERMANENTLY_CLOSED -> {
                 // no dedicated timestamp column for these states
             }
         }

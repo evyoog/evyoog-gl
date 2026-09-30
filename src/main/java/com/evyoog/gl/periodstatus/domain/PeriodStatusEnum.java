@@ -5,5 +5,7 @@ public enum PeriodStatusEnum {
     FUTURE_ENTERABLE,
     OPEN,
     CLOSED,
-    LOCKED
+    LOCKED,
+    /** Terminal — set via {@code PeriodManagementService} once a CLOSED period is finalised. Never reopenable. */
+    PERMANENTLY_CLOSED
 }

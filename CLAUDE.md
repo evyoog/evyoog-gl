@@ -1853,5 +1853,100 @@ V31 migration: add missing WHO columns to 6 tables above
   TrialBalanceService, SegmentReportingService, HierarchicalTrialBalance,
   AIE ExcelParserService, OB OpeningBalanceService, GIN indexes.
 - **TODO Phase 2:** Migrate to dimension.code as JSONB key.
-  Requires V33+ migration to backfill journal_line.account_combination
+  Requires a future migration to backfill journal_line.account_combination
   and account_balance.account_combination across all existing data.
+
+## Period Management Controls (V33 — September 2026)
+
+- **Build-prompt migration steps that were already redundant** — verified via
+  `grep -n "period_type" src/main/resources/db/migration/*.sql` before
+  writing anything: `gl.accounting_period.period_type` (REGULAR/ADJUSTMENT/
+  YEAR_END) already exists from the V7 baseline (GL-09) — the build prompt's
+  step 2 asked for a column that was already there. No column added; V33
+  only creates `gl.legal_entity_period_config`, extends
+  `gl.period_status.status`'s CHECK constraint with `PERMANENTLY_CLOSED`,
+  seeds default config rows, and adds one Adjustment Period (13) per
+  calendar's latest fiscal year. Confirmed the existing unnamed CHECK
+  constraint's default Postgres name (`period_status_status_check`) by
+  inspecting `pg_constraint` on the live dev DB before writing the
+  `DROP CONSTRAINT IF EXISTS` — don't guess constraint names.
+- **`PeriodStatusEnum` reality** — already had `FUTURE_ENTERABLE` and
+  `LOCKED` beyond the build prompt's assumed `NOT_OPENED|OPEN|CLOSED`, plus
+  a `VALID_TRANSITIONS` map and load-bearing tests locking in today's
+  OPEN/CLOSE/LOCK behaviour (`PeriodStatusServiceTest`). Rather than editing
+  that map to allow `CLOSED -> OPEN` for reopen (which would have silently
+  let `PeriodStatusService.open()` reopen a period with none of Rule 6's
+  guards, and broken `testOpenPeriod_fromClosed_throws409`), reopen got its
+  own method, `PeriodStatusService.reopen()`, that never touches
+  `VALID_TRANSITIONS`. `CLOSED -> PERMANENTLY_CLOSED` WAS added to the map
+  (safe — no existing test covered that transition), so
+  `permanentlyClose()` reuses the existing `transition()` gate as a second,
+  defence-in-depth check on top of `PeriodManagementService`'s own explicit
+  ALREADY_PERMANENTLY_CLOSED / PERMANENT_CLOSE_REQUIRES_CLOSED checks.
+  Zero pre-existing `PeriodStatusServiceTest`/`PeriodStatusIT` tests needed
+  changing — verified by running both after the change.
+- **Rules 1-7 live in a new `PeriodManagementService`** (package
+  `com.evyoog.gl.periodmanagement`), sitting in front of
+  `PeriodStatusService` rather than folded into it — `PeriodStatusService`
+  keeps doing the actual mutation + audit write, `PeriodManagementService`
+  only decides whether that mutation is allowed. `PeriodStatusController`'s
+  `open`/`close` endpoints now call `PeriodManagementService`; `open()`
+  branches internally on the period's current status: CLOSED or
+  PERMANENTLY_CLOSED is a reopen (Rule 6), anything else is a fresh open
+  (Rules 1, 2, 3a, 4, 5 in that order — Rule 1 first since it's the cheapest
+  check and every other rule is moot if it fails).
+- **"GL_MANAGER or above" is checked by role lookup, not by
+  `@PreAuthorize`** — `gl:period:manage` already happens to be GL_MANAGER/
+  SYS_ADMIN-only in the AUTH-01 permission seed (GL_ACCOUNTANT/GL_APPROVER/
+  GL_VIEWER/GL_AUDITOR never get it), so in production every caller who
+  reaches these endpoints already passes Rules 5b/6c/7b's intent. But that's
+  a coincidence of today's seed data, not a guarantee, and the rules as
+  specified are unit-testable per-caller checks independent of the
+  endpoint's own permission gate. `PeriodManagementService` therefore takes
+  the caller's real id (parsed in `PeriodStatusController` from
+  `Authentication.getName()` — the JWT subject `JwtAuthenticationFilter`
+  sets as the principal, an actual `auth.users.id`) and looks up their
+  assigned role via `UserRoleRepository.findByUserIdAndLegalEntityId(...)`,
+  checking for `SYS_ADMIN`/`GL_MANAGER`. This is deliberately a *different*
+  identity than the `X-User-Id` header (`performedBy`), which every service
+  in this codebase already treats as an audit-trail display string only,
+  never an identity to authorize against.
+  **Known IT gap**: `TestJwtMockMvcCustomizer`'s synthetic superuser JWT
+  (used as the default `Authorization` header for every pre-AUTH-01 IT) has
+  a random `sub` with no backing `auth.user_roles` row, so any IT that hits
+  the ADJ-period/reopen/permanent-close paths through that default header
+  would see `MANAGER_ROLE_REQUIRED` even though the JWT carries every
+  permission. No such IT was added this session (consistent with the
+  established GL-29/GL-30/V30a/V31 "ITs skipped/limited per Codespace
+  resource constraints" precedent) — a future IT for these three flows needs
+  its own `Authorization` header built from a real seeded user+role, not the
+  shared customizer default.
+- **Rule 2 (future period limit) and Rule 6b (reopen same-fiscal-year)**
+  both need a notion of "the current period" with no dedicated column or
+  service method for it anywhere in the codebase. Both resolve it the same
+  way: prefer the Legal Entity's earliest OPEN period; if none is OPEN,
+  fall back to whichever calendar period's date range contains
+  `LocalDate.now()`. If neither resolves (e.g. a fresh calendar with no
+  periods spanning today), the rule is skipped rather than rejected —
+  verified against `PeriodStatusIT`'s existing `createFirstPeriod` fixture,
+  which generates FY2025 (Apr 2025-Mar 2026) periods that don't span the
+  live "today" at all, and still opens period 1 successfully.
+- **V33's migration steps were verified against the live dev DB, not just
+  Testcontainers** — `evyoog-postgres` (existing container, not a fresh one)
+  was at V32 with 3 Legal Entities and 2 calendars (one spanning 2 fiscal
+  years). Ran V33 for real via `mvn test -DskipITs`'s Flyway bootstrap (not
+  manually via psql — an earlier manual `psql -f` attempt against the same
+  DB was reverted before the real run, since Flyway has no way to know a
+  migration was already hand-applied). Confirmed: 3 config rows seeded
+  correctly; exactly one ADJ period added per calendar, correctly scoped to
+  each calendar's *latest* fiscal year via `DISTINCT ON (accounting_calendar
+  _id) ... ORDER BY end_date DESC` (the 2-fiscal-year calendar got its ADJ
+  period on FY2027-28, not FY2026-27). Also verified end-to-end against a
+  brand-new Testcontainers DB (`PeriodStatusIT`, 0 pre-existing Legal
+  Entities) — the seed/backfill INSERTs are correctly no-ops there.
+- Test count: 454 unit tests (437 prior + 17 new
+  `PeriodManagementServiceTest`), `mvn test -DskipITs` green against the
+  live dev DB (real Flyway V33 application, not a stub). Existing
+  `PeriodStatusIT` (5 tests) reverified green against a fresh Testcontainers
+  DB with the new rules wired into `open`/`close`.
+- Next migration after V33 = V34.

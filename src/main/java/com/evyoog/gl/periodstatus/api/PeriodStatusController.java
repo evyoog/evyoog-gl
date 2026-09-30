@@ -1,6 +1,7 @@
 package com.evyoog.gl.periodstatus.api;
 
 import com.evyoog.gl.common.response.ApiResponse;
+import com.evyoog.gl.periodmanagement.service.PeriodManagementService;
 import com.evyoog.gl.periodstatus.domain.PeriodStatusEnum;
 import com.evyoog.gl.periodstatus.dto.CreatePeriodStatusRequest;
 import com.evyoog.gl.periodstatus.dto.PeriodStatusResponse;
@@ -11,6 +12,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -29,6 +31,7 @@ import java.util.UUID;
 public class PeriodStatusController {
 
     private final PeriodStatusService service;
+    private final PeriodManagementService periodManagementService;
 
     @PostMapping("/api/v1/gl/period-status")
     @ResponseStatus(HttpStatus.CREATED)
@@ -59,11 +62,13 @@ public class PeriodStatusController {
 
     @PostMapping("/api/v1/gl/period-status/{id}/open")
     @PreAuthorize("hasAuthority('gl:period:manage')")
-    @Operation(summary = "Transition a period to OPEN")
+    @Operation(summary = "Transition a period to OPEN. Opening a CLOSED period is a reopen " +
+            "(V33 Rule 6) — subject to the same manager-or-above / current-fiscal-year guards.")
     public ApiResponse<PeriodStatusResponse> open(
             @PathVariable UUID id,
-            @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId) {
-        return ApiResponse.ok(service.open(id, userId));
+            @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId,
+            Authentication authentication) {
+        return ApiResponse.ok(periodManagementService.open(id, actingUserId(authentication), userId));
     }
 
     @PostMapping("/api/v1/gl/period-status/{id}/future-enterable")
@@ -77,11 +82,11 @@ public class PeriodStatusController {
 
     @PostMapping("/api/v1/gl/period-status/{id}/close")
     @PreAuthorize("hasAuthority('gl:period:manage')")
-    @Operation(summary = "Transition a period to CLOSED")
+    @Operation(summary = "Transition a period to CLOSED — all prior periods in the fiscal year must already be closed (V33 Rule 3b)")
     public ApiResponse<PeriodStatusResponse> close(
             @PathVariable UUID id,
             @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId) {
-        return ApiResponse.ok(service.close(id, userId));
+        return ApiResponse.ok(periodManagementService.close(id, userId));
     }
 
     @PostMapping("/api/v1/gl/period-status/{id}/lock")
@@ -91,5 +96,30 @@ public class PeriodStatusController {
             @PathVariable UUID id,
             @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId) {
         return ApiResponse.ok(service.lock(id, userId));
+    }
+
+    @PostMapping("/api/v1/gl/period-status/{id}/permanently-close")
+    @PreAuthorize("hasAuthority('gl:period:manage')")
+    @Operation(summary = "Permanently close a CLOSED period (V33 Rule 7) — terminal, manager-or-above only, never reopenable")
+    public ApiResponse<PeriodStatusResponse> permanentlyClose(
+            @PathVariable UUID id,
+            @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId,
+            Authentication authentication) {
+        return ApiResponse.ok(periodManagementService.permanentlyClose(id, actingUserId(authentication), userId));
+    }
+
+    /**
+     * The acting user's real id, from the JWT subject the {@code JwtAuthenticationFilter}
+     * sets as the authentication principal — distinct from the {@code X-User-Id} header,
+     * which is only ever an audit-trail display string (see {@code performedBy} above).
+     * Used by {@code PeriodManagementService} to look up the caller's actual assigned
+     * role for the manager-or-above checks in Rules 5b/6c/7b.
+     */
+    private UUID actingUserId(Authentication authentication) {
+        try {
+            return UUID.fromString(authentication.getName());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 }
