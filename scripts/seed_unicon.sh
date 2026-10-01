@@ -45,14 +45,14 @@
 
 set -euo pipefail
 
-BASE_URL="${BASE_URL:-http://localhost:8080}"
+BASE_URL="${BASE_URL:-https://finance-api.evyoog.com}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@evyoog.com}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin@eVyoog1}"
-PGHOST="${PGHOST:-localhost}"
+PGHOST="${PGHOST:-jdbc:postgresql://vyg-batch-1.cgtfswn9milw.ap-south-1.rds.amazonaws.com:5432/vygmicroservice}"
 PGPORT="${PGPORT:-5432}"
-PGDB="${PGDB:-evyoog_gl}"
-PGUSER="${PGUSER:-evyoog_app}"
-PGPASSWORD="${PGPASSWORD:-evyoog_dev_pass}"
+PGDB="${PGDB:-vygmicroservice}"
+PGUSER="${PGUSER:-postgres}"
+PGPASSWORD="${PGPASSWORD:-vygpost23}"
 export PGPASSWORD
 
 # ── helpers ────────────────────────────────────────────────────────────────
