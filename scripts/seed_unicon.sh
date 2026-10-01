@@ -104,7 +104,7 @@ if isinstance(items,list) and items:
 }
 
 pg() {
-  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -t -c "$1" | tr -d ' \n'
+  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -t -c "$1" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1
 }
 
 # ── idempotency check ──────────────────────────────────────────────────────
