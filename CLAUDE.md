@@ -2156,3 +2156,102 @@ V31 migration: add missing WHO columns to 6 tables above
 - Test count: 466 unit tests (464 prior + 2 new), `mvn test -DskipITs`
   green against the live dev DB. `PeriodStatusIT` now 7 tests (was 6), all
   green against a fresh Testcontainers DB.
+
+---
+
+## GL_ADMIN Role Architecture (October 2026)
+
+### Background
+Current design has no separation between setup and operations.
+SYS_ADMIN does everything — not production-grade.
+Oracle Fusion model: SYS_ADMIN → GL_ADMIN → GL_MANAGER hierarchy.
+Identified during Unicon Engineers AWS demo setup — Business Unit creation
+silently used logged-in user's LE context instead of allowing explicit LE
+selection. Multi-LE setup is impossible without DB intervention.
+
+### Role Hierarchy
+
+SYS_ADMIN (Vyoog team only)
+└── Creates Business Group (DB only — no UI yet)
+└── Creates GL_ADMIN user for the org
+└── Nothing else
+
+GL_ADMIN (Customer IT/Finance Admin — org-scoped)
+└── COA Structure
+└── Ledger
+└── Legal Entity
+└── Business Units (with explicit LE dropdown — NOT from user context)
+└── Calendar & Periods
+└── Chart of Accounts
+└── Dimension Values
+└── User Management (within their org only)
+└── Opening Balance Import
+
+GL_MANAGER (Customer Finance Team — LE-scoped)
+└── Journal Entry
+└── Period Open/Close/Reopen
+└── Reports (TB, P&L, BS, Cash Flow, Segment)
+└── Account Combinations
+
+
+### Core Design Principle (Oracle Fusion pattern)
+- Setup screens use ADMINISTRATIVE context (what am I configuring)
+- NOT operational context (who am I logged in as)
+- GL_ADMIN context = Business Group scope (sees all LEs under their BG)
+- GL_MANAGER context = Legal Entity scope (sees only their LE data)
+- SYS_ADMIN bypasses all context restrictions
+
+### Phase 1A Scope (current sprint)
+1. V36 migration — add GL_ADMIN to auth.roles table
+2. GL_ADMIN user sees setup screens (COA, Ledger, LE, BU, Calendar, COA, DimValues, OB)
+3. GL_MANAGER user sees operations screens only (Journals, Reports, Periods)
+4. Setup screens get explicit LE/BG dropdowns — NOT derived from user context
+5. Business Unit form — add Legal Entity dropdown (explicit, not implicit)
+6. COA Structure form — Business Group dropdown from all BGs (not user's BG only)
+7. No SYS_ADMIN UI yet — BG creation still via DB
+
+### Phase 1B Scope (next sprint)
+1. SYS_ADMIN UI — create BG, create GL_ADMIN user
+2. Full role-based route guards on all frontend pages
+3. Multi-org isolation (GL_ADMIN sees only their BG's data)
+4. Nav menu adapts per role
+
+### Next Migration
+V36 — add GL_ADMIN role to auth.roles, assign permissions
+
+### Known Bootstrap Issue (current workaround)
+Fresh instance: admin user has no LE → cannot use UI → chicken-and-egg.
+Workaround until Phase 1B SYS_ADMIN UI:
+1. Create LE via API (needs BG ID from DB)
+2. Link admin to LE via DB UPDATE auth.user_roles SET legal_entity_id = ...
+3. Log out and back in → UI picks up context
+
+### Technical Notes
+- Setup screens must accept explicit legalEntityId/businessGroupId as params
+- Never derive setup context from logged-in user's operational LE
+- GL_ADMIN permission set: gl:enterprise:manage, gl:ledger:manage,
+  gl:dimension:manage, gl:coa:manage, gl:period:manage, gl:journal:create,
+  gl:users:edit (within own BG only)
+- GL_MANAGER permission set: gl:journal:*, gl:period:manage, gl:reports:*
+
+## DimensionType SPARE — V35 (October 2026)
+- SPARE added to DimensionType enum (after CUSTOM)
+- V35 migration: drops and recreates finance_dimension_dimension_type_check
+  constraint to include SPARE
+- Short-term fix for DEBT-01: UNIT=CUSTOM, FUTURE=SPARE (no type collision)
+- Frontend: coaStructure.ts — CUSTOM_1 through CUSTOM_7 replaced with
+  CUSTOM and SPARE only
+- 2 new unit tests: SPARE coexists with CUSTOM, second SPARE rejected 409
+- Test count: 468 unit tests (466 prior + 2 new)
+- Next migration: V36
+
+## Modal Focus Bug — Fixed (October 2026)
+- Root cause: Modal.tsx useEffect re-ran when onClose prop changed reference
+  (inline arrow function on every render)
+- Fix: onClose stored in ref (already done), focus setup runs only on mount
+- Affected: ALL 13 pages with modal forms
+- CoaStructurePage: AddCoaStructureModal extracted as separate component
+  (manages own state — prevents page re-render on every keystroke)
+- Symptom: cursor jumped to first input (Code field) after every keystroke
+  in any modal form field
+- No regression — 0 build errors
