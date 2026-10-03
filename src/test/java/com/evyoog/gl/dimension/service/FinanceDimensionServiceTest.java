@@ -221,6 +221,50 @@ class FinanceDimensionServiceTest {
     }
 
     @Test
+    void createDimension_spareAlongsideCustom_succeeds() {
+        // DEBT-01 short-term fix: SPARE is a distinct DimensionType from CUSTOM, so a
+        // Ledger can carry two customer-defined segments (e.g. UNIT=CUSTOM,
+        // FUTURE=SPARE) without colliding on the account_combination JSONB key.
+        Ledger ledger = ledgerWithMode(FinanceMode.THICK);
+        CreateFinanceDimensionRequest request = new CreateFinanceDimensionRequest(
+                ledger.getId(), "FUTURE", "Future Segment", null, DimensionType.SPARE, null, null, null, null);
+        FinanceDimension entity = new FinanceDimension();
+        FinanceDimension saved = FinanceDimension.builder().code("FUTURE").name("Future Segment")
+                .dimensionType(DimensionType.SPARE).ledger(ledger).build();
+        saved.setId(UUID.randomUUID());
+
+        when(ledgerRepository.findById(ledger.getId())).thenReturn(Optional.of(ledger));
+        when(repository.existsByLedgerIdAndCode(ledger.getId(), "FUTURE")).thenReturn(false);
+        when(repository.countByLedgerIdAndIsActiveTrue(ledger.getId())).thenReturn(1L);
+        when(repository.existsByLedgerIdAndDimensionTypeAndIsActiveTrue(ledger.getId(), DimensionType.SPARE))
+                .thenReturn(false);
+        when(mapper.toEntity(request)).thenReturn(entity);
+        when(repository.saveAndFlush(entity)).thenReturn(saved);
+        when(mapper.toResponse(saved, 0L)).thenReturn(responseFor(saved, 0L));
+
+        FinanceDimensionResponse result = service.create(request, "prashanth");
+
+        assertThat(result.dimensionType()).isEqualTo(DimensionType.SPARE);
+    }
+
+    @Test
+    void createDimension_duplicateSpareType_shouldThrow409() {
+        Ledger ledger = ledgerWithMode(FinanceMode.THICK);
+        CreateFinanceDimensionRequest request = new CreateFinanceDimensionRequest(
+                ledger.getId(), "FUTURE2", "Future Segment 2", null, DimensionType.SPARE, null, null, null, null);
+
+        when(ledgerRepository.findById(ledger.getId())).thenReturn(Optional.of(ledger));
+        when(repository.existsByLedgerIdAndCode(ledger.getId(), "FUTURE2")).thenReturn(false);
+        when(repository.countByLedgerIdAndIsActiveTrue(ledger.getId())).thenReturn(2L);
+        when(repository.existsByLedgerIdAndDimensionTypeAndIsActiveTrue(ledger.getId(), DimensionType.SPARE))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> service.create(request, "prashanth"))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "DUPLICATE_DIMENSION_TYPE");
+    }
+
+    @Test
     void createDimension_maxFifteen_shouldThrow409() {
         Ledger ledger = ledgerWithMode(FinanceMode.THICK);
         CreateFinanceDimensionRequest request = new CreateFinanceDimensionRequest(

@@ -44,12 +44,12 @@ class FinanceDimensionIT {
     @Autowired
     private ObjectMapper objectMapper;
 
-    // DimensionType has exactly 8 values (LEGAL_ENTITY, NATURAL_ACCOUNT, COST_CENTRE,
-    // PROFIT_CENTRE, INTERCOMPANY, PRODUCT, PROJECT, CUSTOM), and FinanceDimensionService
+    // DimensionType has exactly 9 values (LEGAL_ENTITY, NATURAL_ACCOUNT, COST_CENTRE,
+    // PROFIT_CENTRE, INTERCOMPANY, PRODUCT, PROJECT, CUSTOM, SPARE), and FinanceDimensionService
     // rejects a second active dimension of the same type on one Ledger
     // (DUPLICATE_DIMENSION_TYPE) since account_combination's JSONB key is the
     // DimensionType name — two dimensions of the same type would silently collide on
-    // that key. A THICK Ledger can therefore have at most 8 dimensions in practice
+    // that key. A THICK Ledger can therefore have at most 9 dimensions in practice
     // today, not the 15 MAX_DIMENSIONS_EXCEEDED alone would allow.
     @Test
     void createThickLedgerDimensions_oncePerType_succeedsUpToLimit() throws Exception {
@@ -58,15 +58,15 @@ class FinanceDimensionIT {
 
         String[] allDimensionTypes = {
                 "LEGAL_ENTITY", "NATURAL_ACCOUNT", "COST_CENTRE", "PROFIT_CENTRE",
-                "INTERCOMPANY", "PRODUCT", "PROJECT", "CUSTOM"
+                "INTERCOMPANY", "PRODUCT", "PROJECT", "CUSTOM", "SPARE"
         };
         for (int i = 0; i < allDimensionTypes.length; i++) {
             createDimension(ledgerId, "DIM-" + i, "Dimension " + i, allDimensionTypes[i])
                     .andExpect(status().isCreated());
         }
 
-        // A 9th dimension of any type already used (CUSTOM, here) is rejected — there
-        // is no 9th distinct DimensionType left to use instead.
+        // A 10th dimension of any type already used (CUSTOM, here) is rejected — there
+        // is no 10th distinct DimensionType left to use instead.
         createDimension(ledgerId, "CUSTOM-2", "Custom Again", "CUSTOM")
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("DUPLICATE_DIMENSION_TYPE"));

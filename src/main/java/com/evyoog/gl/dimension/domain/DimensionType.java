@@ -8,5 +8,6 @@ public enum DimensionType {
     INTERCOMPANY,
     PRODUCT,
     PROJECT,
-    CUSTOM
+    CUSTOM,
+    SPARE   // placeholder/future dimension — distinct from CUSTOM (DEBT-01 short-term fix)
 }
