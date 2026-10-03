@@ -2255,3 +2255,99 @@ Workaround until Phase 1B SYS_ADMIN UI:
 - Symptom: cursor jumped to first input (Code field) after every keystroke
   in any modal form field
 - No regression — 0 build errors
+
+## DEBT-04: Ledger Sharing and COA Instance Architecture (October 2026)
+
+### Background
+Identified during Unicon Engineers AWS demo setup.
+Current eVyoog model incorrectly assumes 1 Ledger : 1 Legal Entity.
+Oracle Fusion allows 1 Ledger shared across multiple Legal Entities
+under the same Business Group, subject to compatibility rules.
+
+### Oracle Fusion Model (Target Architecture)
+
+Business Group
+└── COA Structure (defined once at BG level — segment definitions)
+└── Ledger (shared across compatible Legal Entities)
+├── Legal Entity A
+├── Legal Entity B
+└── Legal Entity C
+(all share same COA Structure, Calendar, Currency)
+
+
+### Ledger Sharing Rules
+A Ledger can be shared across Legal Entities IF:
+- Same COA Structure
+- Same Accounting Calendar
+- Same Functional Currency
+- Same Accounting Standard (IND_AS / GAAP etc.)
+
+Each Legal Entity retains independently:
+- Period Status (open/close independently per LE)
+- Journal authorisation
+- Financial reporting (P&L, BS scoped to LE)
+- GSTIN / TAN
+- Business Units
+
+### COA Instance Concept (Oracle Fusion)
+- COA Structure  → defines SEGMENTS (dimensions, types, order) — BG scoped
+- COA Instance   → activates a COA Structure for a specific Ledger
+- Value Set      → list of valid values per segment per instance
+- Same COA Structure can serve multiple Ledgers via separate COA Instances
+- Each instance can have its own dimension values
+
+### eVyoog Current vs Target
+
+| Rule | Oracle Fusion | eVyoog Current | Gap |
+|---|---|---|---|
+| COA Structure scope | BG level | Ledger level | ⚠️ DEBT-03 |
+| Ledger sharing | 1 Ledger → many LEs | 1 Ledger → 1 LE | ❌ Missing |
+| COA Instance | Exists | Not implemented | ❌ Missing |
+| Value Set | Per instance | Global (BG) | ❌ Phase 2 |
+| Calendar sharing | Ledger level | Ledger level | ✅ OK |
+| Currency | Ledger level | Ledger level | ✅ OK |
+| Period Status | LE level | LE level | ✅ OK |
+| Reporting | LE level | LE level | ✅ OK |
+
+### What Needs to Change in eVyoog
+
+Current:
+  gl.legal_entity_ledger → effectively 1 LE : 1 Ledger
+
+Target:
+  gl.legal_entity_ledger → many LEs : 1 Ledger
+  Validation on Ledger assignment to new LE:
+    - LE's COA Structure must match Ledger's COA Structure
+    - LE's Calendar must match Ledger's Calendar
+    - LE's Currency must match Ledger's functional currency
+    - LE's Accounting Standard must match Ledger's standard
+
+### Unicon Example
+
+Ledger: UNICON-PRIM-01 (INR, IND_AS, Unicon FY Calendar)
+├── LE-UNICON-001 (Unicon Engineers Pvt Ltd — CBE + RYP)
+Future (if new Indian subsidiary added):
+└── LE-UNICON-MUM (Unicon Engineers Mumbai — shares same ledger)
+
+Separate Ledger needed for:
+└── LE-UNICON-UK (GBP, different currency → own ledger)
+└── LE-UNICON-SG (SGD, different currency → own ledger)
+
+
+### Implementation Plan
+
+Phase 1B (alongside GL_ADMIN):
+  - Allow multiple LEs per Ledger in gl.legal_entity_ledger
+  - Add validation on assignment (COA + Calendar + Currency match)
+  - UI: Ledger assignment screen shows compatible LEs only
+
+Phase 2 (COA Instance):
+  - Add gl.coa_instance table (COA Structure + Ledger binding)
+  - Add gl.value_set table (dimension values per instance)
+  - Migrate existing dimension values to value sets
+  - Breaking change — requires full data migration
+
+### Next Migration
+V36 (GL_ADMIN role) comes first.
+Ledger sharing validation: V37 (Phase 1B).
+COA Instance: Phase 2 (breaking change, separate sprint).
