@@ -2440,3 +2440,69 @@ Best done: Before first real customer data is loaded
 ### Supersedes
   DEBT-01 original (SPARE workaround) — still in place for demo
   DEBT-03 (JSONB key migration) — solved simultaneously by this fix
+
+## DEBT-05: Calendar Architecture — 1:1 Ledger Constraint (October 2026)
+
+### Background
+Identified during Unicon Engineers AWS demo setup.
+Current eVyoog model assumes 1 Calendar : 1 Ledger (wrong).
+Oracle Fusion allows 1 Calendar shared across multiple Ledgers.
+
+### Oracle Fusion Model (Source of Truth)
+
+Calendar → standalone entity, defines period structure
+APR-2026, MAY-2026... MAR-2027, ADJ-2027
+Shared across all Ledgers that use it
+No direct Ledger dependency
+
+Period Status → controlled at Ledger + Legal Entity level
+Each Ledger manages its own period status independently
+Same calendar period can be OPEN in one Ledger
+and CLOSED in another
+
+
+### Example
+
+Unicon FY Calendar (Apr-Mar, Monthly)
+├── UNICON-PRIM-01 (INR Ledger)
+│ APR-2026 → OPEN (LE-UNICON-001)
+│ MAY-2026 → OPEN (LE-UNICON-001)
+│
+└── UNICON-USD-01 (USD Ledger — future)
+APR-2026 → CLOSED (LE-UNICON-UK)
+MAY-2026 → OPEN (LE-UNICON-UK)
+
+
+### eVyoog Current vs Target
+
+Current (wrong):
+  gl.accounting_calendar.ledger_id → 1 calendar : 1 ledger
+
+Target (correct):
+  gl.accounting_calendar → standalone (no ledger_id)
+  gl.ledger.calendar_id  → many ledgers point to one calendar
+
+Period Status scope:
+  Current: legal_entity_id + accounting_period_id
+  Target:  ledger_id + legal_entity_id + accounting_period_id
+
+### Good News — Period Management Impact is Low
+eVyoog period_status is already scoped at Legal Entity level (correct).
+When calendar is made ledger-independent, only change needed is:
+  - Add ledger_id to period_status scope
+  - Calendar creation decoupled from Ledger creation
+  - UI: Calendar screen becomes standalone setup step
+
+### Implementation Plan
+Phase 1B:
+  - Make calendar standalone (remove ledger_id from accounting_calendar)
+  - Add calendar_id to gl.ledger
+  - Update period_status scope to include ledger_id
+  - V37 migration
+
+Phase 2:
+  - Calendar sharing UI (assign existing calendar to new ledger)
+  - Period status dashboard across ledgers
+
+### Next Migration
+V36 (GL_ADMIN role) → V37 (Calendar + Ledger sharing) → V38 (COA Instance)
