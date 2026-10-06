@@ -3,6 +3,7 @@ package com.evyoog.gl.ledger.api;
 import com.evyoog.gl.common.response.ApiResponse;
 import com.evyoog.gl.ledger.dto.CreateLedgerRequest;
 import com.evyoog.gl.ledger.dto.LedgerResponse;
+import com.evyoog.gl.ledger.dto.ReplaceLedgerRequest;
 import com.evyoog.gl.ledger.dto.UpdateDynamicInsertRequest;
 import com.evyoog.gl.ledger.dto.UpdateFinanceModeRequest;
 import com.evyoog.gl.ledger.dto.UpdateLedgerRequest;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -59,6 +61,16 @@ public class LedgerController {
     public ApiResponse<List<LedgerResponse>> list(
             @RequestParam(required = false) UUID businessGroupId) {
         return ApiResponse.ok(service.list(businessGroupId));
+    }
+
+    @PutMapping("/{id}")
+    @PreAuthorize("hasAuthority('gl:ledger:manage')")
+    @Operation(summary = "Update a ledger's name and description (structural fields are not editable)")
+    public ApiResponse<LedgerResponse> updateLedger(
+            @PathVariable UUID id,
+            @Valid @RequestBody ReplaceLedgerRequest request,
+            @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId) {
+        return ApiResponse.ok(service.updateLedger(id, request, userId));
     }
 
     @PatchMapping("/{id}")

@@ -11,6 +11,7 @@ import com.evyoog.gl.ledger.domain.Ledger;
 import com.evyoog.gl.ledger.domain.LedgerCategory;
 import com.evyoog.gl.ledger.dto.CreateLedgerRequest;
 import com.evyoog.gl.ledger.dto.LedgerResponse;
+import com.evyoog.gl.ledger.dto.ReplaceLedgerRequest;
 import com.evyoog.gl.ledger.dto.UpdateDynamicInsertRequest;
 import com.evyoog.gl.ledger.dto.UpdateFinanceModeRequest;
 import com.evyoog.gl.ledger.dto.UpdateLedgerRequest;
@@ -66,6 +67,27 @@ public class LedgerService {
         LedgerResponse before = mapper.toResponse(entity);
 
         mapper.updateFromRequest(request, entity);
+        entity.setUpdatedBy(performedBy);
+
+        Ledger saved = repository.saveAndFlush(entity);
+        LedgerResponse response = mapper.toResponse(saved);
+        auditService.log(AuditAction.UPDATE, "ledger", saved.getId(), before, response, performedBy);
+
+        return response;
+    }
+
+    @Transactional
+    public LedgerResponse updateLedger(UUID id, ReplaceLedgerRequest request, String performedBy) {
+        if (request.name() == null || request.name().isBlank()) {
+            throw new EvyoogException("NAME_REQUIRED", "Ledger name must not be blank.",
+                    HttpStatus.BAD_REQUEST, "name");
+        }
+
+        Ledger entity = findOrThrow(id);
+        LedgerResponse before = mapper.toResponse(entity);
+
+        entity.setName(request.name().trim());
+        entity.setDescription(request.description());
         entity.setUpdatedBy(performedBy);
 
         Ledger saved = repository.saveAndFlush(entity);

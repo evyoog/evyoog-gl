@@ -1,5 +1,6 @@
 package com.evyoog.gl.ledger.service;
 
+import com.evyoog.gl.common.audit.domain.AuditAction;
 import com.evyoog.gl.common.audit.service.AuditService;
 import com.evyoog.gl.common.exception.DuplicateResourceException;
 import com.evyoog.gl.common.exception.EvyoogException;
@@ -10,6 +11,7 @@ import com.evyoog.gl.ledger.domain.Ledger;
 import com.evyoog.gl.ledger.domain.LedgerCategory;
 import com.evyoog.gl.ledger.dto.CreateLedgerRequest;
 import com.evyoog.gl.ledger.dto.LedgerResponse;
+import com.evyoog.gl.ledger.dto.ReplaceLedgerRequest;
 import com.evyoog.gl.ledger.dto.UpdateFinanceModeRequest;
 import com.evyoog.gl.ledger.mapper.LedgerMapper;
 import com.evyoog.gl.ledger.repository.LedgerRepository;
@@ -26,6 +28,9 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -142,6 +147,60 @@ class LedgerServiceTest {
         when(repository.findById(id)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getById(id))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void updateLedger_updatesNameAndDescriptionOnly_andAudits() {
+        UUID id = UUID.randomUUID();
+        Ledger entity = Ledger.builder().code("LDG-001").name("Old Name").description("old").financeMode(FinanceMode.THICK)
+                .ledgerCategory(LedgerCategory.PRIMARY).functionalCurrency("INR").accountingStandard(AccountingStandard.IND_AS).build();
+        entity.setId(id);
+        when(repository.findById(id)).thenReturn(Optional.of(entity));
+        when(mapper.toResponse(any())).thenAnswer(inv -> responseFor(inv.getArgument(0)));
+        when(repository.saveAndFlush(entity)).thenReturn(entity);
+
+        LedgerResponse result = service.updateLedger(id, new ReplaceLedgerRequest("  New Name ", "new desc"), "prashanth");
+
+        assertThat(result.name()).isEqualTo("New Name");
+        assertThat(result.description()).isEqualTo("new desc");
+        assertThat(result.code()).isEqualTo("LDG-001");
+        assertThat(result.financeMode()).isEqualTo(FinanceMode.THICK);
+        assertThat(result.functionalCurrency()).isEqualTo("INR");
+        assertThat(entity.getUpdatedBy()).isEqualTo("prashanth");
+        verify(auditService).log(eq(AuditAction.UPDATE), eq("ledger"), eq(id), any(), any(), eq("prashanth"));
+    }
+
+    @Test
+    void updateLedger_nullDescription_clearsIt() {
+        UUID id = UUID.randomUUID();
+        Ledger entity = Ledger.builder().code("LDG-001").name("Ledger").description("old").financeMode(FinanceMode.THICK).build();
+        entity.setId(id);
+        when(repository.findById(id)).thenReturn(Optional.of(entity));
+        when(mapper.toResponse(any())).thenAnswer(inv -> responseFor(inv.getArgument(0)));
+        when(repository.saveAndFlush(entity)).thenReturn(entity);
+
+        service.updateLedger(id, new ReplaceLedgerRequest("Ledger", null), "prashanth");
+
+        assertThat(entity.getDescription()).isNull();
+    }
+
+    @Test
+    void updateLedger_blankName_shouldThrow400() {
+        UUID id = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service.updateLedger(id, new ReplaceLedgerRequest("   ", null), "prashanth"))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "NAME_REQUIRED");
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void updateLedger_whenMissing_shouldThrowResourceNotFoundException() {
+        UUID id = UUID.randomUUID();
+        when(repository.findById(id)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.updateLedger(id, new ReplaceLedgerRequest("Ledger", null), "prashanth"))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 }
