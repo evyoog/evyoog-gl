@@ -2351,3 +2351,92 @@ Phase 2 (COA Instance):
 V36 (GL_ADMIN role) comes first.
 Ledger sharing validation: V37 (Phase 1B).
 COA Instance: Phase 2 (breaking change, separate sprint).
+
+## DEBT-01 Revised — DimensionType Fundamental Design Gap (October 2026)
+
+### Background
+Original DEBT-01 identified DimensionType collision (UNIT and FUTURE both
+needing CUSTOM). Short-term fix added SPARE (V35). This revision documents
+the correct long-term fix based on Oracle Fusion COA segment qualifier model.
+
+### Oracle Fusion Segment Qualifier Model (Source of Truth)
+
+Oracle mandates segment qualifiers ONLY for system-behaviour segments:
+  PRIMARY_BALANCING  → Company/Legal Entity (1 per COA — mandatory)
+  NATURAL_ACCOUNT    → Account segment (1 per COA — mandatory)
+  COST_CENTER        → Cost Centre (mandatory if using Fixed Assets)
+
+All other segments are NON-QUALIFIED:
+  Project, Product, Future, Location, Business Unit etc.
+  → No segment label required
+  → No special system behaviour
+  → Unlimited count per COA Structure
+  → Identified only by their segment code
+
+### eVyoog Current Model — Wrong
+
+DimensionType enum forces every segment into a typed slot:
+  NATURAL_ACCOUNT   ✅ correct — system behaviour needed
+  PROFIT_CENTRE     ✅ correct — balancing behaviour needed
+  COST_CENTRE       ✅ correct — Assets module needs this
+  INTERCOMPANY      ✅ correct — IC elimination needed
+  PROJECT           ⚠️ debatable — no system behaviour yet
+  PRODUCT           ⚠️ debatable — no system behaviour yet
+  CUSTOM            ❌ wrong — only 1 slot for unlimited segments
+  SPARE             ❌ workaround — same problem, just 2 slots now
+
+Root cause: eVyoog forces every segment to have a DimensionType but only
+has 1-2 slots for non-qualified segments. A customer needing 3+ custom
+segments hits the same wall.
+
+### Correct Long-Term Fix — Boolean Flags (Option B)
+
+Replace DimensionType enum with boolean qualifier flags on finance_dimension:
+
+  is_natural_account    BOOLEAN DEFAULT FALSE
+  is_primary_balancing  BOOLEAN DEFAULT FALSE
+  is_cost_centre        BOOLEAN DEFAULT FALSE
+  is_intercompany       BOOLEAN DEFAULT FALSE
+
+Non-qualified segments: all flags FALSE — no collision possible.
+Unlimited non-qualified segments per COA Structure.
+System behaviour driven by flags, not type names.
+Segment identified by dimension.code (not DimensionType).
+
+Benefits:
+  ✅ Unlimited non-qualified segments
+  ✅ No enum collision ever
+  ✅ Maps exactly to Oracle qualifier model
+  ✅ JSONB key uses dimension.code — fixes DEBT-03 simultaneously
+  ✅ Cleaner than NULL type approach
+
+### Impact of Long-Term Fix (Breaking Change)
+
+Affected components:
+  - finance_dimension table (new boolean columns, DimensionType removed)
+  - PostingEngine Rules 9-11 (reads flags not DimensionType)
+  - AccountCombinationService (JSONB key → dimension.code not DimensionType)
+  - TrialBalanceService, SegmentReportingService, HierarchicalTrialBalance
+  - AIE ExcelParserService, OpeningBalanceService
+  - All 468 unit tests referencing DimensionType
+  - Frontend coaStructure.ts (dimension type dropdown → qualifier checkboxes)
+  - V36+ migration — backfill existing rows, drop DimensionType column
+
+Effort: 4-5 days
+Risk: High — touches PostingEngine and all reporting
+Best done: Before first real customer data is loaded
+
+### Current Demo Workaround (Unicon Engineers)
+  UNIT   → DimensionType = CUSTOM   (short-term acceptable)
+  FUTURE → DimensionType = SPARE    (V35 fix)
+  account_combination JSONB key uses DimensionType.name() for now
+
+### Implementation Plan
+  Phase 1B: Design and spec the boolean flags migration
+  Phase 2:  Implement — V38 migration + full PostingEngine refactor
+            Must be done before onboarding 2nd customer with different COA
+            Cannot defer beyond first production customer
+
+### Supersedes
+  DEBT-01 original (SPARE workaround) — still in place for demo
+  DEBT-03 (JSONB key migration) — solved simultaneously by this fix
