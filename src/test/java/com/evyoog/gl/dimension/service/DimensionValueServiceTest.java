@@ -260,6 +260,36 @@ class DimensionValueServiceTest {
     }
 
     @Test
+    void reactivateValue_success() {
+        FinanceDimension fd = financeDimension(DimensionType.COST_CENTRE);
+        UUID id = UUID.randomUUID();
+        DimensionValue entity = DimensionValue.builder().code("CC-001").name("Cost Centre 1").financeDimension(fd).build();
+        entity.setId(id);
+        entity.setActive(false);
+
+        when(repository.findById(id)).thenReturn(Optional.of(entity));
+        when(mapper.toResponse(any(DimensionValue.class))).thenAnswer(inv -> responseFor(inv.getArgument(0)));
+        when(repository.saveAndFlush(entity)).thenReturn(entity);
+
+        DimensionValueResponse response = service.reactivate(id, "prashanth");
+
+        assertThat(entity.isActive()).isTrue();
+        assertThat(entity.getUpdatedBy()).isEqualTo("prashanth");
+        assertThat(response.isActive()).isTrue();
+    }
+
+    @Test
+    void reactivateValue_whenMissing_throwsDimensionValueNotFound() {
+        UUID id = UUID.randomUUID();
+        when(repository.findById(id)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.reactivate(id, "prashanth"))
+                .isInstanceOf(EvyoogException.class)
+                .hasFieldOrPropertyWithValue("code", "DIMENSION_VALUE_NOT_FOUND")
+                .hasFieldOrPropertyWithValue("status", org.springframework.http.HttpStatus.NOT_FOUND);
+    }
+
+    @Test
     void getById_whenMissing_shouldThrowResourceNotFoundException() {
         UUID id = UUID.randomUUID();
         when(repository.findById(id)).thenReturn(Optional.empty());

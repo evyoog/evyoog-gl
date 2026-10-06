@@ -223,6 +223,23 @@ public class DimensionValueService {
         auditService.log(AuditAction.DELETE, "dimension_value", saved.getId(), before, mapper.toResponse(saved), performedBy);
     }
 
+    @Transactional
+    public DimensionValueResponse reactivate(UUID id, String performedBy) {
+        DimensionValue entity = repository.findById(id)
+                .orElseThrow(() -> new EvyoogException("DIMENSION_VALUE_NOT_FOUND",
+                        "Dimension value not found: " + id, HttpStatus.NOT_FOUND));
+        DimensionValueResponse before = mapper.toResponse(entity);
+
+        entity.setActive(true);
+        entity.setUpdatedBy(performedBy);
+
+        DimensionValue saved = repository.saveAndFlush(entity);
+        DimensionValueResponse response = mapper.toResponse(saved);
+        auditService.log(AuditAction.UPDATE, "dimension_value", saved.getId(), before, response, performedBy);
+
+        return response;
+    }
+
     @Transactional(readOnly = true)
     public DimensionValueResponse getById(UUID id) {
         return mapper.toResponse(findOrThrow(id));

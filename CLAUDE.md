@@ -2506,3 +2506,58 @@ Phase 2:
 
 ### Next Migration
 V36 (GL_ADMIN role) → V37 (Calendar + Ledger sharing) → V38 (COA Instance)
+
+## DEBT-06: Ledger Status — No Setup Completion Workflow (October 2026)
+
+### Background
+Identified during Unicon Engineers AWS demo setup.
+Ledger is created as Active by default even before a Legal Entity is assigned.
+Oracle Fusion has a formal setup completion workflow for Ledgers.
+
+### Oracle Fusion Model (Source of Truth)
+
+Ledger created → Status = INCOMPLETE
+LE assigned → Status = INCOMPLETE (still)
+Calendar assigned → Status = INCOMPLETE (still)
+COA assigned → Status = INCOMPLETE (still)
+"Complete Setup" → Status = ACTIVE (explicit admin action)
+Journal posting → Only allowed on ACTIVE ledgers
+
+
+### eVyoog Current vs Target
+
+Current (wrong):
+  Ledger created → is_active = TRUE immediately
+  No setup completion workflow
+  No status progression
+  Journal posting not blocked on incomplete ledgers
+  (period gate catches this indirectly)
+
+Target (correct):
+  Ledger status: INCOMPLETE → ACTIVE
+  INCOMPLETE: LE not yet assigned, calendar not yet assigned
+  ACTIVE: all required setup complete
+  Journal posting blocked on INCOMPLETE ledgers explicitly
+
+### Required Setup Checklist (before ACTIVE)
+  ✅ COA Structure assigned
+  ✅ At least one Legal Entity assigned
+  ✅ Accounting Calendar assigned
+  ✅ At least one period OPEN
+
+### Implementation Plan
+Phase 1B:
+  - Add status column to gl.ledger (INCOMPLETE/ACTIVE)
+  - Auto-transition to ACTIVE when LE + Calendar + Period all present
+  - Block journal posting on INCOMPLETE ledgers (explicit error)
+  - UI: Setup progress indicator on Ledger card
+  - V37 or V38 migration
+
+### Current Demo Workaround
+Accept ACTIVE by default — fine for demo since:
+  - No periods open until Calendar created
+  - Period gate in PostingEngine blocks premature posting
+  - Single tenant demo — no risk of cross-tenant confusion
+
+### Next Migration
+To be included in Phase 1B alongside V37 (Calendar standalone).

@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -69,9 +70,9 @@ public class DimensionValueController {
         return ApiResponse.ok(service.search(ledgerId, code));
     }
 
-    @PatchMapping("/{id}")
+    @RequestMapping(value = "/{id}", method = {RequestMethod.PUT, RequestMethod.PATCH})
     @PreAuthorize("hasAuthority('gl:dimension:manage')")
-    @Operation(summary = "Update mutable fields of a dimension value")
+    @Operation(summary = "Update mutable fields of a dimension value (PUT and PATCH behave identically)")
     public ApiResponse<DimensionValueResponse> update(
             @PathVariable UUID id,
             @Valid @RequestBody UpdateDimensionValueRequest request,
@@ -95,6 +96,15 @@ public class DimensionValueController {
             @PathVariable UUID id,
             @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId) {
         return ApiResponse.ok(service.clearDefault(id, userId));
+    }
+
+    @PatchMapping("/{id}/reactivate")
+    @PreAuthorize("hasAuthority('gl:dimension:manage')")
+    @Operation(summary = "Reactivate a previously deactivated dimension value (isActive = true)")
+    public ApiResponse<DimensionValueResponse> reactivate(
+            @PathVariable UUID id,
+            @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId) {
+        return ApiResponse.ok(service.reactivate(id, userId));
     }
 
     @DeleteMapping("/{id}")
